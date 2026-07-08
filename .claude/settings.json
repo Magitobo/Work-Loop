@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(*)",
+      "Edit(*)",
+      "Write(*)",
+      "mcp__atlassian__jira_get_issue",
+      "mcp__atlassian__jira_search",
+      "mcp__atlassian__jira_download_attachments",
+      "mcp__atlassian__jira_get_issue_images"
+    ],
+    "deny": []
+  }
+}
