@@ -2300,5 +2300,141 @@ class TestAbortHandling(unittest.TestCase):
             proc_mock.terminate.assert_called()
 
 
+class TestBuildLauncher(unittest.TestCase):
+    """Verify that the generated launcher script records PID and .done correctly."""
+
+    def _make_wl(self, tmp: str) -> WorkLoop:
+        content = (
+            "# Work Loop\n\n"
+            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
+            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
+            "| MY-ITEM | [Task](MY-ITEM/C.md) | remote@host | ready |  |  |  |\n\n"
+            "## Done\n\n"
+            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
+            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
+        )
+        wl = _make_workloop(tmp, content)
+        return wl
+
+    def test_launcher_backgrounds_claude_and_writes_pid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp)
+            script = wl.build_launcher("MY-ITEM", "2026-01-01_12-00-00", 5.0)
+            # Claude command must end with & (backgrounded)
+            self.assertIn('claude --print', script)
+            self.assertIn('&\n', script)
+            # PID file written right after backgrounding
+            self.assertIn('echo $! >', script)
+            self.assertIn('.pid', script)
+            # wait for completion, then write .done
+            self.assertIn('wait $!', script)
+            self.assertIn('.done', script)
+
+    def test_launcher_pid_written_before_done(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp)
+            script = wl.build_launcher("MY-ITEM", "2026-01-01_12-00-00", 5.0)
+            pid_pos = script.index('.pid')
+            done_pos = script.index('.done')
+            self.assertLess(pid_pos, done_pos)
+
+
+class TestRemoteAbort(unittest.TestCase):
+    """Unit tests for abort handling in wait_for_remote and _abort_remote."""
+
+    def _make_wl(self, tmp: str, status: str = "in-progress") -> WorkLoop:
+        content = (
+            "# Work Loop\n\n"
+            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
+            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
+            f"| MY-ITEM | [Task](MY-ITEM/C.md) | remote@host | {status} |  |  |  |\n\n"
+            "## Done\n\n"
+            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
+            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
+        )
+        wl = _make_workloop(tmp, content)
+        (Path(tmp) / ".logs").mkdir(exist_ok=True)
+        item_dir = Path(tmp) / "MY-ITEM"
+        item_dir.mkdir()
+        (item_dir / "CONVERSATION.md").write_text("## 2026-01-01 | User\n\nDo it.\n")
+        return wl
+
+    def test_wait_for_remote_aborts_when_status_is_abort(self):
+        """wait_for_remote calls _abort_remote and returns without syncing back normally."""
+        from unittest.mock import patch, MagicMock, call
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp, status="abort")
+
+            abort_remote_mock = MagicMock()
+            sync_back_mock = MagicMock()
+
+            with patch.object(wl, "_abort_remote", abort_remote_mock), \
+                 patch.object(wl, "_sync_back_remote", sync_back_mock):
+                wl.wait_for_remote("MY-ITEM", "2026-01-01_12-00-00", "remote@host", 10.0,
+                                   poll_interval=0, timeout=30)
+
+            abort_remote_mock.assert_called_once_with(
+                "MY-ITEM", "2026-01-01_12-00-00", "remote@host", 10.0)
+            sync_back_mock.assert_not_called()
+
+    def test_wait_for_remote_normal_completion_not_affected(self):
+        """When status is in-progress and .done appears, _sync_back_remote is called normally."""
+        from unittest.mock import patch, MagicMock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp, status="in-progress")
+
+            abort_remote_mock = MagicMock()
+            sync_back_mock = MagicMock()
+
+            def fake_ssh(*args, **kwargs):
+                cmd = args[0] if args else kwargs.get("args", [])
+                if isinstance(cmd, list) and any(".done" in c for c in cmd):
+                    result = MagicMock()
+                    result.stdout = "0"
+                    return result
+                return MagicMock(stdout="", returncode=0)
+
+            with patch("subprocess.run", side_effect=fake_ssh), \
+                 patch.object(wl, "_abort_remote", abort_remote_mock), \
+                 patch.object(wl, "_sync_back_remote", sync_back_mock):
+                wl.wait_for_remote("MY-ITEM", "2026-01-01_12-00-00", "remote@host", 10.0,
+                                   poll_interval=0, timeout=30)
+
+            abort_remote_mock.assert_not_called()
+            sync_back_mock.assert_called_once()
+
+    def test_abort_remote_leaves_status_as_abort(self):
+        """_abort_remote does not overwrite abort with needs-review."""
+        from unittest.mock import patch, MagicMock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp, status="abort")
+
+            noop = MagicMock(returncode=0, stdout="", stderr="")
+            with patch("subprocess.run", return_value=noop), \
+                 patch.object(run_loop, "_run", return_value=noop):
+                wl._abort_remote("MY-ITEM", "2026-01-01_12-00-00", "remote@host", 10.0)
+
+            self.assertEqual(wl.get_col("MY-ITEM", COL_STATUS), "abort")
+
+    def test_abort_remote_prepends_notice(self):
+        """_abort_remote prepends an abort notice to CONVERSATION.md."""
+        from unittest.mock import patch, MagicMock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp, status="abort")
+
+            noop = MagicMock(returncode=0, stdout="", stderr="")
+            with patch("subprocess.run", return_value=noop), \
+                 patch.object(run_loop, "_run", return_value=noop):
+                wl._abort_remote("MY-ITEM", "2026-01-01_12-00-00", "remote@host", 10.0)
+
+            conv = (Path(tmp) / "MY-ITEM" / "CONVERSATION.md").read_text()
+            self.assertIn("Run aborted", conv)
+            self.assertIn("aborted by user", conv)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -487,24 +487,24 @@ class WorkLoop:
             rwd_capture = 'RWD="$(pwd)"\n'
             cd_work = f"cd {work_dir}\n" if work_dir else ""
             debug_flag = f'--debug-file "$RWD/.logs/{ts_str}_{item_id}.debug" '
-            log_redir = f' > "$RWD/.logs/{ts_str}_{item_id}.log" 2>&1\n'
-            done_write = f'echo $? > "$RWD/{item_id}/.done"\n'
+            log_redir = f'> "$RWD/.logs/{ts_str}_{item_id}.log" 2>&1'
+            done_dir = '$RWD'
         elif mode == "resolved":
             prompt_file = "RESOLVE-PROMPT.md"
             extra_vars = f"$'\\nITEM_ID: {item_id}'"
             rwd_capture = ""
             cd_work = ""
             debug_flag = f'--debug-file ".logs/{ts_str}_{item_id}.debug" '
-            log_redir = f' > ".logs/{ts_str}_{item_id}.log" 2>&1\n'
-            done_write = f'echo $? > "{item_id}/.done"\n'
+            log_redir = f'> ".logs/{ts_str}_{item_id}.log" 2>&1'
+            done_dir = '.'
         else:
             prompt_file = "LOOP-PROMPT.md"
             extra_vars = f"$'\\nITEM_ID: {item_id}'"
             rwd_capture = ""
             cd_work = ""
             debug_flag = f'--debug-file ".logs/{ts_str}_{item_id}.debug" '
-            log_redir = f' > ".logs/{ts_str}_{item_id}.log" 2>&1\n'
-            done_write = f'echo $? > "{item_id}/.done"\n'
+            log_redir = f'> ".logs/{ts_str}_{item_id}.log" 2>&1'
+            done_dir = '.'
         return (
             "#!/bin/bash\n"
             # nvm is initialized in .bashrc which non-interactive SSH sessions skip.
@@ -516,9 +516,11 @@ class WorkLoop:
             f"{rwd_capture}"
             f'PROMPT="$(cat {prompt_file})"{extra_vars}\n'
             f"{cd_work}"
-            f'claude --print --permission-mode auto --max-budget-usd {budget} {debug_flag}"$PROMPT"'
-            f"{log_redir}"
-            f"{done_write}"
+            # Background claude so we can record PID immediately; enables remote abort.
+            f'claude --print --permission-mode auto --max-budget-usd {budget} {debug_flag}"$PROMPT" {log_redir} &\n'
+            f'echo $! > {done_dir}/{item_id}/.pid\n'
+            f"wait $!\n"
+            f'echo $? > {done_dir}/{item_id}/.done\n'
         )
 
     # -------------------------------------------------------------------------
@@ -713,6 +715,36 @@ class WorkLoop:
             print(f"\n[{_ts()}] {item_id}: recovering stalled remote job...")
             self._sync_back_remote(item_id, ts_str, remote_host, budget, exit_str)
 
+    def _abort_remote(self, item_id: str, ts_str: str, remote_host: str, budget: float) -> None:
+        """Kill the remote Claude process (via .pid), sync back, leave status as abort."""
+        rwd = self.remote_work_dir
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        # Best-effort kill; ignore errors (process may have already exited)
+        subprocess.run(
+            ["ssh", remote_host,
+             f"PID=$(cat {rwd}/{item_id}/.pid 2>/dev/null); [ -n \"$PID\" ] && kill $PID 2>/dev/null; true"],
+            check=False,
+        )
+
+        # Sync back whatever was written before we killed it
+        item_dir = self.work_dir / item_id
+        _run(["rsync", "-avz", "--delete", "--exclude=.done", "--exclude=.pid",
+              f"{remote_host}:{rwd}/{item_id}/", f"{item_dir}/"], check=False)
+        _run(["rsync", "-avz",
+              f"{remote_host}:{rwd}/.logs/{ts_str}_{item_id}.log",
+              str(self.log_dir) + "/"], check=False)
+        _run(["rsync", "-avz",
+              f"{remote_host}:{rwd}/.logs/{ts_str}_{item_id}.debug",
+              str(self.log_dir) + "/"], check=False)
+
+        subprocess.run(["ssh", remote_host, f"rm -rf {rwd}"], check=False)
+
+        self.update_col(item_id, COL_LAST_UPDATED, today)
+        self.prepend_abort_notice(item_id, today, budget, "aborted by user")
+        # Status stays as abort — do NOT overwrite with needs-review
+        print(f"[{_ts()}] {item_id}: remote abort — killed, synced back, status left as abort")
+
     def wait_for_remote(
         self,
         item_id: str,
@@ -729,6 +761,11 @@ class WorkLoop:
         deadline = time.time() + timeout
 
         while time.time() < deadline:
+            if self.get_col(item_id, COL_STATUS) == 'abort':
+                print(f"\n[{_ts()}] {item_id}: abort requested — killing remote Claude")
+                self._abort_remote(item_id, ts_str, remote_host, budget)
+                return
+
             result = subprocess.run(
                 ["ssh", remote_host, f"cat {rwd}/{item_id}/.done 2>/dev/null"],
                 capture_output=True, text=True,
