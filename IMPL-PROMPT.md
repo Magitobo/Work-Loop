@@ -10,6 +10,7 @@ Each iteration implements ONE item with a fresh context. The script determines w
 - Always write to CONVERSATION.md, even on error. The user monitors that file.
 - When referencing vault files in note content, use Obsidian wiki links `[[filename]]` (without extension).
 - Any standalone report `.md` file created in ITEM_DIR must include a back-link to `[[CONVERSATION]]` near the top.
+- Add wiki links to all files you modified or created. 
 
 ---
 

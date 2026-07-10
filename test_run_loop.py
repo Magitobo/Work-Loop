@@ -534,6 +534,10 @@ class TestTriggerStatuses(unittest.TestCase):
         wl = self._make_wl_with_statuses({"A": "in-progress"})
         self.assertEqual(wl.get_ready_items(), [])
 
+    def test_abort_does_not_trigger(self):
+        wl = self._make_wl_with_statuses({"A": "abort"})
+        self.assertEqual(wl.get_ready_items(), [])
+
     def test_multiple_modes_returned_in_order(self):
         wl = self._make_wl_with_statuses({"A": "analyze", "B": "implement", "C": "ready"})
         items = wl.get_ready_items()
@@ -2176,6 +2180,124 @@ class TestFindLatestRunsMdRun(unittest.TestCase):
         wl._append_runs_md_row("SI-001", "20260105-002", "t", "running")
         result = wl._find_latest_runs_md_run("SI-001", "success")
         self.assertEqual(result, "20260105-001")
+
+
+# ---------------------------------------------------------------------------
+# TestAbortHandling
+# ---------------------------------------------------------------------------
+
+class TestAbortHandling(unittest.TestCase):
+    """Tests for the 'abort' status: trigger skipping, process_local outcome, watcher."""
+
+    def _make_wl(self, tmp: str, status: str = "ready") -> WorkLoop:
+        content = (
+            "# Work Loop\n\n"
+            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
+            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
+            f"| MY-ITEM | [Task](MY-ITEM/C.md) | local | {status} |  |  |  |\n\n"
+            "## Done\n\n"
+            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
+            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
+        )
+        wl = _make_workloop(tmp, content)
+        (Path(tmp) / ".logs").mkdir(exist_ok=True)
+        item_dir = Path(tmp) / "MY-ITEM"
+        item_dir.mkdir()
+        (item_dir / "CONVERSATION.md").write_text("## 2026-01-01 | User\n\nDo it.\n")
+        return wl
+
+    def test_abort_status_leaves_abort_after_process_local(self):
+        """Status stays 'abort' when watcher kills Claude mid-run."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp)
+
+            def run_claude_aborts(*args, **kwargs):
+                wl.update_col("MY-ITEM", COL_STATUS, "abort")
+                return 1
+
+            with patch.object(WorkLoop, "run_claude", side_effect=run_claude_aborts):
+                wl.process_local("MY-ITEM", 10.0)
+
+            self.assertEqual(wl.get_col("MY-ITEM", COL_STATUS), "abort")
+
+    def test_abort_status_does_not_set_needs_review(self):
+        """Aborted items must not land on needs-review."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp)
+
+            def run_claude_aborts(*args, **kwargs):
+                wl.update_col("MY-ITEM", COL_STATUS, "abort")
+                return 1
+
+            with patch.object(WorkLoop, "run_claude", side_effect=run_claude_aborts):
+                wl.process_local("MY-ITEM", 10.0)
+
+            self.assertNotEqual(wl.get_col("MY-ITEM", COL_STATUS), "needs-review")
+
+    def test_abort_prepends_notice(self):
+        """process_local writes an abort notice to CONVERSATION.md."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp)
+
+            def run_claude_aborts(*args, **kwargs):
+                wl.update_col("MY-ITEM", COL_STATUS, "abort")
+                return 1
+
+            with patch.object(WorkLoop, "run_claude", side_effect=run_claude_aborts):
+                wl.process_local("MY-ITEM", 10.0)
+
+            text = (Path(tmp) / "MY-ITEM" / "CONVERSATION.md").read_text()
+            self.assertIn("Run aborted", text)
+            self.assertIn("aborted by user", text)
+
+    def test_nonzero_exit_without_abort_still_sets_needs_review(self):
+        """Regression: a non-abort failure still lands on needs-review."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp)
+            with patch.object(WorkLoop, "run_claude", return_value=1):
+                wl.process_local("MY-ITEM", 10.0)
+            self.assertEqual(wl.get_col("MY-ITEM", COL_STATUS), "needs-review")
+
+    def test_watcher_terminates_process_on_abort(self):
+        """run_claude's abort watcher calls proc.terminate() when status is 'abort'."""
+        from unittest.mock import patch, MagicMock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp)
+            # Fast poll interval so the watcher fires without a 3-second wait.
+            wl._abort_poll_interval = 0.01
+            log_file = Path(tmp) / ".logs" / "test.log"
+
+            # Process blocks on read until terminate() is called.
+            import threading as _threading
+            _unblock = _threading.Event()
+            proc_mock = MagicMock()
+            proc_mock.stdout.read.side_effect = lambda _n: (
+                b"" if _unblock.wait(timeout=5) else b""
+            )
+            proc_mock.terminate.side_effect = lambda: _unblock.set()
+            proc_mock.wait.return_value = -15
+
+            original_get_col = wl.get_col
+
+            def abort_get_col(item_id, col_idx):
+                if col_idx == COL_STATUS and item_id == "MY-ITEM":
+                    return "abort"
+                return original_get_col(item_id, col_idx)
+
+            with patch("subprocess.Popen", return_value=proc_mock), \
+                 patch.object(wl, "get_col", side_effect=abort_get_col):
+                wl.run_claude("prompt text", log_file, 10.0, item_id="MY-ITEM")
+
+            proc_mock.terminate.assert_called()
 
 
 if __name__ == "__main__":

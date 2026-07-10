@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -338,7 +339,7 @@ class WorkLoop:
         print(f"[{_ts()}] WARNING: no 'work_dir:' found in {item_id}/CONVERSATION.md — using loop root")
         return str(self.work_dir)
 
-    def run_claude(self, prompt: str, log_file: Path, budget: float, cwd: str | None = None) -> int:
+    def run_claude(self, prompt: str, log_file: Path, budget: float, cwd: str | None = None, item_id: str | None = None) -> int:
         debug_file = log_file.with_suffix('.debug')
         cmd = [
             "claude", "--print",
@@ -353,6 +354,20 @@ class WorkLoop:
             stderr=subprocess.STDOUT,
             cwd=cwd or str(self.work_dir),
         )
+
+        _stop_watcher = threading.Event()
+        _abort_poll_interval = getattr(self, "_abort_poll_interval", 3)
+
+        def _abort_watcher():
+            while not _stop_watcher.wait(timeout=_abort_poll_interval):
+                if item_id and self.get_col(item_id, COL_STATUS) == 'abort':
+                    print(f"\n[{_ts()}] {item_id}: abort requested — terminating Claude")
+                    proc.terminate()
+                    return
+
+        watcher = threading.Thread(target=_abort_watcher, daemon=True)
+        watcher.start()
+
         with open(log_file, 'wb') as lf:
             while True:
                 chunk = proc.stdout.read(4096)
@@ -362,6 +377,8 @@ class WorkLoop:
                 sys.stdout.buffer.flush()
                 lf.write(chunk)
         proc.wait()
+        _stop_watcher.set()
+        watcher.join(timeout=1)
         return proc.returncode
 
     def prepend_abort_notice(self, item_id: str, date_str: str, budget: float, cause: str = "budget exceeded") -> None:
@@ -429,12 +446,18 @@ class WorkLoop:
         )
 
         print(f"[{_ts()}] Processing: {item_id} (mode: {mode}, budget: ${budget}, cwd: {cwd})")
-        exit_code = self.run_claude(prompt, log_file, budget, cwd=cwd)
+        exit_code = self.run_claude(prompt, log_file, budget, cwd=cwd, item_id=item_id)
+
+        # Re-read status: user may have set it to 'abort' while Claude was running
+        current_status = self.get_col(item_id, COL_STATUS)
 
         self.update_col(item_id, COL_LAST_UPDATED, today)
         self.update_col(item_id, COL_LOG, log_link)
 
-        if exit_code != 0:
+        if current_status == 'abort':
+            self.prepend_abort_notice(item_id, today, budget, "aborted by user")
+            print(f"[{_ts()}] {item_id}: aborted by user — status left as abort")
+        elif exit_code != 0:
             failure = self._classify_failure(item_id, ts)
             if failure == "auth":
                 budget_label, cause, msg = f"${budget} - AUTH-EXPIRED", "Kerberos auth expired", f"[{_ts()}] {item_id}: Kerberos auth expired — marked needs-review"

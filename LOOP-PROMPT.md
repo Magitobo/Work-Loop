@@ -9,7 +9,7 @@ Each iteration processes ONE item with a fresh context. The script determines wh
 - Always write to CONVERSATION.md, even if you encounter errors or cannot complete the task — the user monitors that file and must not miss anything. Record any issues, permission errors, or incomplete runs there.
 - When referencing vault files in note content, use Obsidian wiki links `[[filename]]` (without extension).
 - Any standalone report `.md` file created in ITEM_DIR must include a back-link to `[[CONVERSATION]]` near the top.
-
+- Add wiki links to all files you modified or created. 
 ---
 
 Use the ITEM_ID passed below. Process that single item:

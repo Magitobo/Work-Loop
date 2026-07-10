@@ -49,6 +49,8 @@ MyNotebook/
 ```
 new → ready/analyze/implement → in-progress → needs-review
                                              → blocked
+                 abort ←──────────────────── in-progress (kill running job)
+                 abort  (set before dispatch; loop skips without starting)
                                 done  (auto-moved to Done section)
 ```
 
@@ -60,6 +62,7 @@ new → ready/analyze/implement → in-progress → needs-review
 | `in-progress` | Set by loop before Claude starts; prevents double-dispatch |
 | `needs-review` | Claude finished (or failed); human review needed |
 | `blocked` | Kerberos expired on remote, or Claude hit a hard blocker |
+| `abort` | Set by human to cancel: skips un-started items; kills running Claude within ~3s |
 | `done` | Human marks complete; loop moves row to Done section |
 
 ## Work Item Structure
