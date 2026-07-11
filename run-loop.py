@@ -381,6 +381,54 @@ class WorkLoop:
         watcher.join(timeout=1)
         return proc.returncode
 
+    def _inject_session_cost(self, item_id: str, started_after: str = '') -> None:
+        """Append ' — $X.XX' to the newest '## date | Claude' heading in CONVERSATION.md.
+
+        started_after: ISO 8601 UTC timestamp; filters to sessions active after this time
+        so that a concurrent or prior session is not mistakenly attributed.
+        CONVERSATION.md is prepended (newest entry at top), so count=1 correctly targets
+        the most recent Claude heading.
+        """
+        try:
+            result = subprocess.run(
+                ["ccusage", "session", "-j"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode != 0:
+                return
+            data = json.loads(result.stdout)
+            sessions = data.get('session', [])
+            if not sessions:
+                return
+            # Scope to sessions active after this run started (avoids picking a concurrent session)
+            if started_after:
+                sessions = [s for s in sessions
+                            if s.get('metadata', {}).get('lastActivity', '') >= started_after]
+            if not sessions:
+                return
+            latest = max(sessions, key=lambda s: s.get('metadata', {}).get('lastActivity', ''))
+            cost = latest.get('totalCost', 0)
+            if not cost:
+                return
+            conv_file = self.work_dir / item_id / "CONVERSATION.md"
+            if not conv_file.exists():
+                return
+            content = conv_file.read_text()
+            # [^—\n]* prevents double-patching a heading already annotated with ' — $X.XX'
+            patched = re.sub(
+                r'^(## \d{4}-\d{2}-\d{2} \| Claude[^—\n]*)$',
+                rf'\1 — ${cost:.2f}',
+                content,
+                count=1,
+                flags=re.MULTILINE,
+            )
+            if patched != content:
+                conv_file.write_text(patched)
+        except FileNotFoundError:
+            pass  # ccusage not installed — cost annotation skipped
+        except Exception as e:
+            print(f"[{_ts()}] WARNING: _inject_session_cost failed for {item_id}: {e}")
+
     def prepend_abort_notice(self, item_id: str, date_str: str, budget: float, cause: str = "budget exceeded") -> None:
         conv_file = self.work_dir / item_id / "CONVERSATION.md"
         if not conv_file.exists():
@@ -412,6 +460,7 @@ class WorkLoop:
         self._auto_init_conversation(item_id)
         today = datetime.now().strftime('%Y-%m-%d')
         ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        run_start = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.000Z')
         log_file = self.log_dir / f"{ts}_{item_id}.log"
         log_link = f"[Log](.logs/{ts}_{item_id}.debug)"
 
@@ -469,6 +518,7 @@ class WorkLoop:
             print(msg)
         else:
             self.update_col(item_id, COL_BUDGET, f"${budget}")
+            self._inject_session_cost(item_id, run_start)
             if mode == "resolved":
                 self._move_row_to_done(item_id)
                 print(f"[{_ts()}] {item_id}: resolved — moved to Done section")

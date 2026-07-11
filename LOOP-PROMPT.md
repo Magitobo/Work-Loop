@@ -30,33 +30,35 @@ Read all available context:
 4. If ITEM_ID looks like a Jira key (e.g. DBGTRC-1234), fetch via Jira MCP and download
    any relevant attachments or images
 
-Then produce a **DRAFT** (in-context only — do NOT write to CONVERSATION.md yet):
+Then produce a **DRAFT** (in-context only — do NOT write to CONVERSATION.md yet).
+Use compact shorthand — the Critic reads the DRAFT verbatim and understands these prefixes:
 
 ```
 --- DRAFT ---
 
-SOURCES:
-- {ITEM_DIR}/CONVERSATION.md: loaded / COULD NOT READ
-- {ITEM_DIR}/background.md: loaded / not found
-- {ITEM_DIR}/context/{file}: loaded / COULD NOT READ
-- Jira {ITEM_ID}: loaded / not applicable
-(list every source attempted and whether it loaded)
+SRC: {ITEM_DIR}/CONVERSATION.md: loaded | {ITEM_DIR}/background.md: not found | ...
+(one SRC: line per source — "loaded", "not found", or "COULD NOT READ")
 
-ANSWERS TO PRIOR QUESTIONS:
-For each question in the prior Claude entry's Questions list, and each inline "Oliver:"
-annotation in CONVERSATION.md: answer it directly here. Use context files, Jira, and
-your own knowledge freely — for questions about Claude Code features, YAML syntax, or
-general software engineering, answer from knowledge without needing a file source.
-If genuinely unanswerable, note it here and carry it forward to DRAFT QUESTIONS.
+ANS [Q1 or Oliver annotation text]: answer in one line
+ANS [Q2]: answer in one line
+(repeat for each prior question or Oliver: annotation; omit entire ANS block if none)
 
-DRAFT FINDINGS:
-- ...
+FIND: finding, one line
+FIND: another finding
+(repeat for each finding)
 
-DRAFT QUESTIONS:
-1. ...
+Q: question requiring user input, one line
+Q: another question
+(repeat for open questions; omit if none)
 
 --- END DRAFT ---
 ```
+
+Answer each question from the prior Claude entry's Questions list and each inline "Oliver:"
+annotation. Use context files, Jira, and your own knowledge freely — for Claude Code
+features, YAML syntax, or general software engineering, answer from knowledge.
+If genuinely unanswerable, write `Q: [original question] (unanswerable — [reason])` and
+carry it forward to the Questions section in Step 4.
 
 ## Step 2 — Internal Review
 
@@ -70,7 +72,7 @@ Review the following draft findings for work item {ITEM_ID}.
 ITEM_DIR: {ITEM_DIR}
 
 --- DRAFT ---
-{paste the full DRAFT from Step 1, including SOURCES, DRAFT FINDINGS, and DRAFT QUESTIONS}
+{paste the full DRAFT from Step 1}
 --- END ---
 
 Apply your four checks. Return your checklist.
@@ -80,7 +82,7 @@ Wait for it to complete before proceeding.
 
 ## Step 3 — Revise
 
-Read the Critic and Code Reviewer outputs. Update your DRAFT to address all issues before
+Read the Critic output. Update your DRAFT to address all issues before
 writing to CONVERSATION.md:
 
 - **Critic WARNING** (inaccessible resource): Add to Findings: "Note: [{file/URL}] could not
