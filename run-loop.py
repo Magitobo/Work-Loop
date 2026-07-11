@@ -545,10 +545,10 @@ class WorkLoop:
             if resolve_prompt_file.exists():
                 _run(["rsync", "-avz", str(resolve_prompt_file), f"{remote_host}:{rwd}/"])
 
-        settings_file = self.script_dir / ".claude" / "settings.json"
-        if settings_file.exists():
+        claude_dir = self.script_dir / ".claude"
+        if claude_dir.exists():
             _run(["ssh", remote_host, f"mkdir -p {rwd}/.claude"])
-            _run(["rsync", "-avz", str(settings_file), f"{remote_host}:{rwd}/.claude/"])
+            _run(["rsync", "-avz", str(claude_dir) + "/", f"{remote_host}:{rwd}/.claude/"])
 
         title = self.get_item_title(item_id)
         stub = self.build_stub_work_md(item_id, title)
