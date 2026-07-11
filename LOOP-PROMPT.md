@@ -29,7 +29,6 @@ Read all available context:
 3. Read all files under `{ITEM_DIR}/context/`
 4. If ITEM_ID looks like a Jira key (e.g. DBGTRC-1234), fetch via Jira MCP and download
    any relevant attachments or images
-5. Run: `fdfind -e py -e gel -e sh -e js -e ts {ITEM_DIR}` to detect code files
 
 Then produce a **DRAFT** (in-context only — do NOT write to CONVERSATION.md yet):
 
@@ -59,14 +58,11 @@ DRAFT QUESTIONS:
 --- END DRAFT ---
 ```
 
-Also record: **Has code files**: yes/no
+## Step 2 — Internal Review
 
-## Step 2 — Internal Review (parallel)
+Spawn the following agent. Its output is FOR YOUR USE IN STEP 3 — it will NOT appear in CONVERSATION.md.
 
-Spawn both of the following in parallel (two Agent tool calls in one response turn).
-Their output is FOR YOUR USE IN STEP 3 — it will NOT appear in CONVERSATION.md.
-
-**Always — `subagent_type="critic"`:**
+**`subagent_type="critic"`:**
 
 ```
 Review the following draft findings for work item {ITEM_ID}.
@@ -80,20 +76,7 @@ ITEM_DIR: {ITEM_DIR}
 Apply your four checks. Return your checklist.
 ```
 
-**If code files were found — `subagent_type="code-reviewer"`:**
-
-```
-Review code files for work item {ITEM_ID}.
-
-Code files:
-{list of code file paths from Step 1}
-
-ITEM_DIR: {ITEM_DIR}
-
-Read each file, run any existing tests (or write a smoke test), and return your structured review.
-```
-
-Wait for both to complete before proceeding.
+Wait for it to complete before proceeding.
 
 ## Step 3 — Revise
 
@@ -108,10 +91,6 @@ writing to CONVERSATION.md:
   Remove the question from DRAFT QUESTIONS.
 - **Critic GAP** (missing coverage): Add a question if user input is needed, or address in
   Findings if you can resolve it.
-- **Code Reviewer MUST-FIX**: Add as a prominent finding.
-- **Code Reviewer SHOULD-FIX / SUGGESTION**: Add to Findings, or to Questions if user
-  input is needed.
-
 The result is the FINAL Answers, Findings, and Questions.
 
 ## Step 4 — Write CONVERSATION.md

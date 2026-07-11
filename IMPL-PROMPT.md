@@ -24,7 +24,23 @@ Use the ITEM_ID, WORK_LOOP_DIR, and ITEM_DIR passed at the end of this prompt.
 4. Read the implementation spec referenced in CONVERSATION.md (typically `ITEM_DIR/implementation-spec.md`
    or another file named in the conversation).
 5. Execute the implementation tasks in order, verifying each step.
-6. Prepend a new entry to `ITEM_DIR/CONVERSATION.md` in this format:
+6. **Code Review** — if any code files were written or modified, spawn a `subagent_type="code-reviewer"` agent:
+
+   ```
+   Review code changes made for work item {ITEM_ID}.
+
+   Code files modified or created:
+   {list of code file paths}
+
+   ITEM_DIR: {ITEM_DIR}
+
+   Read each file, run any existing tests, and return your structured review.
+   ```
+
+   Wait for it to complete. Address any MUST-FIX findings before proceeding. Note
+   SHOULD-FIX and SUGGESTION items in the CONVERSATION.md Issues section below.
+
+7. Prepend a new entry to `ITEM_DIR/CONVERSATION.md` in this format:
 
 ---
 ## {YYYY-MM-DD} | Claude
@@ -40,6 +56,6 @@ Use the ITEM_ID, WORK_LOOP_DIR, and ITEM_DIR passed at the end of this prompt.
 
 ---
 
-7. Update `WORK_LOOP_DIR/WORK.md`: find the row with ITEM_ID, set Status to "needs-review".
+8. Update `WORK_LOOP_DIR/WORK.md`: find the row with ITEM_ID, set Status to "needs-review".
    If the Title cell is plain text (not a markdown link), replace it with
    `[concise title](ITEM_ID/CONVERSATION.md)`.
