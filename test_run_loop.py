@@ -48,19 +48,7 @@ def _can_reach_remote(host: str) -> bool:
         return False
 
 
-def _remote_has_kerberos(host: str) -> bool:
-    """Return True if the remote machine has a valid Kerberos ticket."""
-    try:
-        result = subprocess.run(
-            ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", host, "klist -s"],
-            capture_output=True, timeout=10,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
-
-
-REMOTE_AVAILABLE = _can_reach_remote(REMOTE_HOST) and _remote_has_kerberos(REMOTE_HOST)
+REMOTE_AVAILABLE = _can_reach_remote(REMOTE_HOST)
 
 # ---------------------------------------------------------------------------
 # Sample WORK.md fixture
@@ -90,7 +78,8 @@ def _make_workloop(tmp_dir: str, content: str = SAMPLE_WORK_MD) -> WorkLoop:
     p = Path(tmp_dir)
     (p / "WORK.md").write_text(content)
     (p / "LOOP-PROMPT.md").write_text("Do the work.\n")
-    return WorkLoop(p, max_budget=10.00)
+    cfg = {"work_dir": p, "harness": {"type": "claude", "max_budget_usd": 10.00}, "remote": {"work_dir": "~/Work-Loop"}}
+    return WorkLoop(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -422,8 +411,7 @@ class TestRunModeRouting(unittest.TestCase):
         def fake_dispatch(item_id, ts_str, remote_host, budget, mode="analyze"):
             captured["mode"] = mode
 
-        with patch.object(WorkLoop, "_remote_has_kerberos", return_value=True), \
-             patch.object(WorkLoop, "dispatch_remote", side_effect=fake_dispatch), \
+        with patch.object(WorkLoop, "dispatch_remote", side_effect=fake_dispatch), \
              patch.object(WorkLoop, "wait_for_remote"):
             wl.run(once=True)
         return captured.get("mode")
@@ -467,10 +455,10 @@ class TestPrependAbortNotice(unittest.TestCase):
         conv = item_dir / "CONVERSATION.md"
         conv.write_text("Original.\n")
 
-        self.wl.prepend_abort_notice("ITEM-001", "2026-05-14", budget=self.wl.max_budget, cause="Kerberos auth expired")
+        self.wl.prepend_abort_notice("ITEM-001", "2026-05-14", budget=self.wl.max_budget, cause="run failed")
 
         text = conv.read_text()
-        self.assertIn("Kerberos auth expired", text)
+        self.assertIn("run failed", text)
         self.assertNotIn("budget exceeded", text)
 
     def test_prepend_noop_if_no_conversation(self):
@@ -906,26 +894,6 @@ class TestClassifyFailure(unittest.TestCase):
         (log_dir / f"{self.TS}_MY-ITEM.log").write_text(log_content)
         return wl
 
-    def test_detects_auth_from_apikeyhelper(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            wl = self._make_wl_with_log(tmp,
-                "apiKeyHelper failed: exited 1: ...\n"
-                "Error: No valid Kerberos ticket found.\n"
-                "Run: kinit your-username@ENT.TI.COM\n"
-                "Failed to authenticate. API Error: 401 Authentication Error\n"
-            )
-            self.assertEqual(wl._classify_failure("MY-ITEM", self.TS), "auth")
-
-    def test_detects_auth_from_failed_to_authenticate(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            wl = self._make_wl_with_log(tmp, "Failed to authenticate.\n")
-            self.assertEqual(wl._classify_failure("MY-ITEM", self.TS), "auth")
-
-    def test_detects_auth_from_no_valid_kerberos(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            wl = self._make_wl_with_log(tmp, "Error: No valid Kerberos ticket found.\n")
-            self.assertEqual(wl._classify_failure("MY-ITEM", self.TS), "auth")
-
     def test_returns_unknown_for_clean_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl_with_log(tmp, "## Analysis\n\nFindings here.\n")
@@ -940,58 +908,6 @@ class TestClassifyFailure(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl_with_log(tmp, "Claude's cost ($12.00) exceeded the budget ($10.00).\n")
             self.assertEqual(wl._classify_failure("MY-ITEM", self.TS), "budget")
-
-
-# ---------------------------------------------------------------------------
-# TestKerberosExpiredBlocks
-# ---------------------------------------------------------------------------
-
-class TestKerberosExpiredBlocks(unittest.TestCase):
-    """When Kerberos check fails, item is set to blocked and loop skips it."""
-
-    WORK_MD = (
-        "# Work Loop\n\n"
-        "| ID      | Title | Location                | Status | Last Updated | Budget | Log |\n"
-        "| ------- | ----- | ----------------------- | ------ | ------------ | ------ | --- |\n"
-        "| MY-ITEM | Task  | xgemuadm@some-remote-01 | ready  |              |        |     |\n\n"
-        "## Done\n\n"
-        "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-        "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-    )
-
-    def _run_loop_with_kerberos_mock(self, tmp: str, kerberos_ok: bool) -> WorkLoop:
-        from unittest.mock import patch, MagicMock
-        wl = _make_workloop(tmp, self.WORK_MD)
-        with patch.object(WorkLoop, "_remote_has_kerberos", return_value=kerberos_ok), \
-             patch.object(WorkLoop, "dispatch_remote"), \
-             patch.object(WorkLoop, "wait_for_remote"):
-            wl.run(once=True)
-        return wl
-
-    def test_kerberos_expired_sets_status_blocked(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            wl = self._run_loop_with_kerberos_mock(tmp, kerberos_ok=False)
-            self.assertEqual(wl.get_col("MY-ITEM", COL_STATUS), "blocked")
-
-    def test_kerberos_expired_does_not_dispatch(self):
-        from unittest.mock import patch, MagicMock
-        with tempfile.TemporaryDirectory() as tmp:
-            wl = _make_workloop(tmp, self.WORK_MD)
-            with patch.object(WorkLoop, "_remote_has_kerberos", return_value=False), \
-                 patch.object(WorkLoop, "dispatch_remote") as mock_dispatch, \
-                 patch.object(WorkLoop, "wait_for_remote"):
-                wl.run(once=True)
-            mock_dispatch.assert_not_called()
-
-    def test_kerberos_valid_dispatches(self):
-        from unittest.mock import patch, MagicMock
-        with tempfile.TemporaryDirectory() as tmp:
-            wl = _make_workloop(tmp, self.WORK_MD)
-            with patch.object(WorkLoop, "_remote_has_kerberos", return_value=True), \
-                 patch.object(WorkLoop, "dispatch_remote") as mock_dispatch, \
-                 patch.object(WorkLoop, "wait_for_remote"):
-                wl.run(once=True)
-            mock_dispatch.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1056,31 +972,18 @@ class TestSyncBackRemote(unittest.TestCase):
             self._run_sync(wl, "0")
             self.assertEqual(wl.get_col("MY-ITEM", COL_BUDGET), "$10.0")
 
-    def test_budget_exceeded_on_failure(self):
+    def test_budget_failed_on_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl(tmp)
             self._run_sync(wl, "1")
-            self.assertIn("EXCEEDED", wl.get_col("MY-ITEM", COL_BUDGET))
+            self.assertIn("FAILED", wl.get_col("MY-ITEM", COL_BUDGET))
 
-    def test_budget_auth_expired_on_auth_failure(self):
-        auth_log = (
-            "apiKeyHelper failed: exited 1: Warning: ...\n"
-            "Error: No valid Kerberos ticket found.\n"
-            "Failed to authenticate. API Error: 401 Authentication Error\n"
-        )
+    def test_budget_failed_on_non_budget_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
-            wl = self._make_wl(tmp, log_content=auth_log)
+            wl = self._make_wl(tmp)
             self._run_sync(wl, "1")
-            self.assertIn("AUTH-EXPIRED", wl.get_col("MY-ITEM", COL_BUDGET))
+            self.assertIn("FAILED", wl.get_col("MY-ITEM", COL_BUDGET))
             self.assertNotIn("EXCEEDED", wl.get_col("MY-ITEM", COL_BUDGET))
-
-    def test_abort_notice_has_auth_cause(self):
-        auth_log = "apiKeyHelper failed: exited 1: ...\nFailed to authenticate.\n"
-        with tempfile.TemporaryDirectory() as tmp:
-            wl = self._make_wl(tmp, log_content=auth_log)
-            self._run_sync(wl, "1")
-            text = (Path(tmp) / "MY-ITEM" / "CONVERSATION.md").read_text()
-            self.assertIn("Kerberos auth expired", text)
 
     def test_log_col_set_to_ts_and_item(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1368,8 +1271,7 @@ class TestResolvedModeTrigger(unittest.TestCase):
         def fake_dispatch(item_id, ts_str, remote_host, budget, mode="analyze"):
             captured["mode"] = mode
 
-        with patch.object(WorkLoop, "_remote_has_kerberos", return_value=True), \
-             patch.object(WorkLoop, "dispatch_remote", side_effect=fake_dispatch), \
+        with patch.object(WorkLoop, "dispatch_remote", side_effect=fake_dispatch), \
              patch.object(WorkLoop, "wait_for_remote"):
             wl.run(once=True)
         self.assertEqual(captured.get("mode"), "resolved")
@@ -1602,7 +1504,7 @@ class TestProcessLocalResolvedMode(unittest.TestCase):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl(tmp)
-            with patch.object(WorkLoop, "run_claude", return_value=0):
+            with patch.object(WorkLoop, "_run_harness", return_value=0):
                 wl.process_local("MY-ITEM", 10.0)
             text = (Path(tmp) / "WORK.md").read_text()
             done_idx = text.index("## Done")
@@ -1613,7 +1515,7 @@ class TestProcessLocalResolvedMode(unittest.TestCase):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl(tmp)
-            with patch.object(WorkLoop, "run_claude", return_value=1):
+            with patch.object(WorkLoop, "_run_harness", return_value=1):
                 wl.process_local("MY-ITEM", 10.0)
             self.assertEqual(wl.get_col("MY-ITEM", COL_STATUS), "needs-review")
 
@@ -1621,7 +1523,7 @@ class TestProcessLocalResolvedMode(unittest.TestCase):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl(tmp)
-            with patch.object(WorkLoop, "run_claude", return_value=1):
+            with patch.object(WorkLoop, "_run_harness", return_value=1):
                 wl.process_local("MY-ITEM", 10.0)
             text = (Path(tmp) / "WORK.md").read_text()
             done_idx = text.index("## Done")
@@ -1728,7 +1630,8 @@ def _make_script_item(tmp_dir: str, item_id: str, runs_md_content: str, work_md:
     item_dir = p / item_id
     item_dir.mkdir(parents=True, exist_ok=True)
     (item_dir / "RUNS.md").write_text(runs_md_content)
-    return WorkLoop(p, max_budget=10.00)
+    cfg = {"work_dir": p, "harness": {"type": "claude", "max_budget_usd": 10.00}, "remote": {"work_dir": "~/Work-Loop"}}
+    return WorkLoop(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -2060,7 +1963,8 @@ class TestInitializeNewItemScriptItem(unittest.TestCase):
         )
         p = Path(self.tmp)
         (p / "WORK.md").write_text(content)
-        wl2 = WorkLoop(p, max_budget=10.0)
+        cfg = {"work_dir": p, "harness": {"type": "claude", "max_budget_usd": 10.0}, "remote": {"work_dir": "~/Work-Loop"}}
+        wl2 = WorkLoop(cfg)
         wl2.initialize_new_item("NEW-1")
         conv = p / "NEW-1" / "CONVERSATION.md"
         self.assertTrue(conv.exists())
@@ -2207,17 +2111,17 @@ class TestAbortHandling(unittest.TestCase):
         return wl
 
     def test_abort_status_leaves_abort_after_process_local(self):
-        """Status stays 'abort' when watcher kills Claude mid-run."""
+        """Status stays 'abort' when watcher kills the harness mid-run."""
         from unittest.mock import patch
 
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl(tmp)
 
-            def run_claude_aborts(*args, **kwargs):
+            def run_harness_aborts(*args, **kwargs):
                 wl.update_col("MY-ITEM", COL_STATUS, "abort")
                 return 1
 
-            with patch.object(WorkLoop, "run_claude", side_effect=run_claude_aborts):
+            with patch.object(WorkLoop, "_run_harness", side_effect=run_harness_aborts):
                 wl.process_local("MY-ITEM", 10.0)
 
             self.assertEqual(wl.get_col("MY-ITEM", COL_STATUS), "abort")
@@ -2229,11 +2133,11 @@ class TestAbortHandling(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl(tmp)
 
-            def run_claude_aborts(*args, **kwargs):
+            def run_harness_aborts(*args, **kwargs):
                 wl.update_col("MY-ITEM", COL_STATUS, "abort")
                 return 1
 
-            with patch.object(WorkLoop, "run_claude", side_effect=run_claude_aborts):
+            with patch.object(WorkLoop, "_run_harness", side_effect=run_harness_aborts):
                 wl.process_local("MY-ITEM", 10.0)
 
             self.assertNotEqual(wl.get_col("MY-ITEM", COL_STATUS), "needs-review")
@@ -2245,11 +2149,11 @@ class TestAbortHandling(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl(tmp)
 
-            def run_claude_aborts(*args, **kwargs):
+            def run_harness_aborts(*args, **kwargs):
                 wl.update_col("MY-ITEM", COL_STATUS, "abort")
                 return 1
 
-            with patch.object(WorkLoop, "run_claude", side_effect=run_claude_aborts):
+            with patch.object(WorkLoop, "_run_harness", side_effect=run_harness_aborts):
                 wl.process_local("MY-ITEM", 10.0)
 
             text = (Path(tmp) / "MY-ITEM" / "CONVERSATION.md").read_text()
@@ -2262,18 +2166,18 @@ class TestAbortHandling(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl(tmp)
-            with patch.object(WorkLoop, "run_claude", return_value=1):
+            with patch.object(WorkLoop, "_run_harness", return_value=1):
                 wl.process_local("MY-ITEM", 10.0)
             self.assertEqual(wl.get_col("MY-ITEM", COL_STATUS), "needs-review")
 
     def test_watcher_terminates_process_on_abort(self):
-        """run_claude's abort watcher calls proc.terminate() when status is 'abort'."""
+        """ClaudeHarness's abort watcher calls proc.terminate() when status is 'abort'."""
         from unittest.mock import patch, MagicMock
 
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl(tmp)
             # Fast poll interval so the watcher fires without a 3-second wait.
-            wl._abort_poll_interval = 0.01
+            wl.harness._abort_poll_interval = 0.01
             log_file = Path(tmp) / ".logs" / "test.log"
 
             # Process blocks on read until terminate() is called.
@@ -2295,7 +2199,7 @@ class TestAbortHandling(unittest.TestCase):
 
             with patch("subprocess.Popen", return_value=proc_mock), \
                  patch.object(wl, "get_col", side_effect=abort_get_col):
-                wl.run_claude("prompt text", log_file, 10.0, item_id="MY-ITEM")
+                wl.harness.run("prompt text", 10.0, None, "MY-ITEM", log_file)
 
             proc_mock.terminate.assert_called()
 

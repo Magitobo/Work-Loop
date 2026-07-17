@@ -1,0 +1,11 @@
+{
+  "work_dir": "/path/to/Work-Loop-Items",
+  "harness": {
+    "type": "opencode",
+    "model": "anthropic/claude-sonnet-4-5",
+    "max_budget_usd": 10.00
+  },
+  "remote": {
+    "work_dir": "~/Work-Loop"
+  }
+}

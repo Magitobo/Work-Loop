@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Work-loop processor: runs Claude on ready work items, local or remote."""
+"""Work-loop processor: runs Claude or OpenCode on ready work items, local or remote."""
 
 import json
 import os
@@ -10,13 +10,340 @@ import sys
 import tempfile
 import threading
 import time
+from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
 
-WORK_DIR = Path.home() / "MyNotebook" / "Work-Loop-Items"
-SCRIPT_DIR = Path(__file__).parent
-MAX_BUDGET = 10.00
-REMOTE_WORK_DIR = "~/Work-Loop"
+
+def load_config(config_path: Path) -> dict:
+    """Read config.json, validate required keys, fail fast with clear error."""
+    if not config_path.exists():
+        print(f"ERROR: config.json not found at {config_path}")
+        print("Create one from config.json.example and update work_dir / harness settings.")
+        sys.exit(1)
+    try:
+        with open(config_path, 'r') as f:
+            cfg = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"ERROR: config.json is not valid JSON: {e}")
+        sys.exit(1)
+    # Validate required keys
+    for key in ('work_dir', 'harness'):
+        if key not in cfg:
+            print(f"ERROR: config.json missing required key: '{key}'")
+            sys.exit(1)
+    harness = cfg.get('harness', {})
+    if 'type' not in harness:
+        print("ERROR: config.json 'harness' missing required key: 'type'")
+        sys.exit(1)
+    if harness['type'] not in ('claude', 'opencode'):
+        print(f"ERROR: harness.type must be 'claude' or 'opencode', got: {harness['type']!r}")
+        sys.exit(1)
+    return cfg
+
+
+# Harness base class
+class Harness(ABC):
+    """Abstract base for AI harness backends (Claude, OpenCode, etc.)."""
+
+    @abstractmethod
+    def run(self, prompt: str, budget: float, cwd: str | None, item_id: str | None, log_file: Path) -> int:
+        """Run the harness with the given prompt. Returns exit code."""
+        ...
+
+    @abstractmethod
+    def launcher_script(self, item_id: str, ts_str: str, budget: float, mode: str, work_dir: str | None, remote_work_dir: str) -> str:
+        """Generate a bash launcher script for remote dispatch."""
+        ...
+
+    @abstractmethod
+    def agent_dir_name(self) -> str:
+        """Return the agent directory name (e.g. '.claude' or '.opencode')."""
+        ...
+
+    @abstractmethod
+    def cost_injection(self, work_dir: Path, item_id: str, started_after: str = '') -> None:
+        """Append cost info to CONVERSATION.md after a successful run."""
+        ...
+
+
+class ClaudeHarness(Harness):
+    """Claude CLI harness."""
+
+    def run(self, prompt: str, budget: float, cwd: str | None, item_id: str | None, log_file: Path) -> int:
+        debug_file = log_file.with_suffix('.debug')
+        cmd = [
+            "claude", "--print",
+            "--permission-mode", "auto",
+            "--max-budget-usd", str(budget),
+            "--debug-file", str(debug_file),
+            prompt,
+        ]
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=cwd or str(work_dir_from_config),
+        )
+
+        _stop_watcher = threading.Event()
+        _abort_poll_interval = getattr(self, "_abort_poll_interval", 3)
+
+        def _abort_watcher():
+            while not _stop_watcher.wait(timeout=_abort_poll_interval):
+                if item_id and work_loop_instance and work_loop_instance.get_col(item_id, COL_STATUS) == 'abort':
+                    print(f"\n[{_ts()}] {item_id}: abort requested — terminating Claude")
+                    proc.terminate()
+                    return
+
+        watcher = threading.Thread(target=_abort_watcher, daemon=True)
+        watcher.start()
+
+        with open(log_file, 'wb') as lf:
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                sys.stdout.buffer.write(chunk)
+                sys.stdout.buffer.flush()
+                lf.write(chunk)
+        proc.wait()
+        _stop_watcher.set()
+        watcher.join(timeout=1)
+        return proc.returncode
+
+    def launcher_script(self, item_id: str, ts_str: str, budget: float, mode: str, work_dir: str | None, remote_work_dir: str) -> str:
+        if mode == "implement":
+            prompt_file = "IMPL-PROMPT.md"
+            extra_vars = f"$'\\nITEM_ID: {item_id}\\nWORK_LOOP_DIR: {remote_work_dir}\\nITEM_DIR: {remote_work_dir}/{item_id}'"
+            rwd_capture = 'RWD="$(pwd)"\n'
+            cd_work = f"cd {work_dir}\n" if work_dir else ""
+            debug_flag = f'--debug-file "$RWD/.logs/{ts_str}_{item_id}.debug" '
+            log_redir = f'> "$RWD/.logs/{ts_str}_{item_id}.log" 2>&1'
+            done_dir = '$RWD'
+        elif mode == "resolved":
+            prompt_file = "RESOLVE-PROMPT.md"
+            extra_vars = f"$'\\nITEM_ID: {item_id}'"
+            rwd_capture = ""
+            cd_work = ""
+            debug_flag = f'--debug-file ".logs/{ts_str}_{item_id}.debug" '
+            log_redir = f'> ".logs/{ts_str}_{item_id}.log" 2>&1'
+            done_dir = '.'
+        else:
+            prompt_file = "LOOP-PROMPT.md"
+            extra_vars = f"$'\\nITEM_ID: {item_id}'"
+            rwd_capture = ""
+            cd_work = ""
+            debug_flag = f'--debug-file ".logs/{ts_str}_{item_id}.debug" '
+            log_redir = f'> ".logs/{ts_str}_{item_id}.log" 2>&1'
+            done_dir = '.'
+        return (
+            "#!/bin/bash\n"
+            'export NVM_DIR="$HOME/.nvm"\n'
+            '[ -s "$NVM_DIR/nvm.sh" ] && \\. "$NVM_DIR/nvm.sh"\n'
+            f"cd {remote_work_dir}\n"
+            "mkdir -p .logs\n"
+            f"{rwd_capture}"
+            f'PROMPT="$(cat {prompt_file})"{extra_vars}\n'
+            f"{cd_work}"
+            f'claude --print --permission-mode auto --max-budget-usd {budget} {debug_flag}"$PROMPT" {log_redir} &\n'
+            f'echo $! > {done_dir}/{item_id}/.pid\n'
+            f"wait $!\n"
+            f'echo $? > {done_dir}/{item_id}/.done\n'
+        )
+
+    def agent_dir_name(self) -> str:
+        return ".claude"
+
+    def cost_injection(self, work_dir: Path, item_id: str, started_after: str = '') -> None:
+        try:
+            result = subprocess.run(
+                ["ccusage", "session", "-j"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode != 0:
+                return
+            data = json.loads(result.stdout)
+            sessions = data.get('session', [])
+            if not sessions:
+                return
+            if started_after:
+                sessions = [s for s in sessions
+                            if s.get('metadata', {}).get('lastActivity', '') >= started_after]
+            if not sessions:
+                return
+            latest = max(sessions, key=lambda s: s.get('metadata', {}).get('lastActivity', ''))
+            cost = latest.get('totalCost', 0)
+            if not cost:
+                return
+            conv_file = work_dir / item_id / "CONVERSATION.md"
+            if not conv_file.exists():
+                return
+            content = conv_file.read_text()
+            patched = re.sub(
+                r'^(## \d{4}-\d{2}-\d{2} \| Claude[^—\n]*)$',
+                rf'\1 — ${cost:.2f}',
+                content,
+                count=1,
+                flags=re.MULTILINE,
+            )
+            if patched != content:
+                conv_file.write_text(patched)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"[{_ts()}] WARNING: cost_injection failed for {item_id}: {e}")
+
+
+class OpenCodeHarness(Harness):
+    """OpenCode CLI harness."""
+
+    def run(self, prompt: str, budget: float, cwd: str | None, item_id: str | None, log_file: Path) -> int:
+        model_arg = ""
+        if hasattr(self, '_model') and self._model:
+            model_arg = ["--model", self._model]
+        cmd = [
+            "opencode", "run",
+            "--auto",
+            "--format", "json",
+            "--title", item_id or "work-loop",
+        ] + model_arg
+        if cwd:
+            cmd.extend(["--dir", cwd])
+        cmd.append(prompt)
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=cwd or str(work_dir_from_config),
+        )
+
+        _stop_watcher = threading.Event()
+        _abort_poll_interval = getattr(self, "_abort_poll_interval", 3)
+
+        def _abort_watcher():
+            while not _stop_watcher.wait(timeout=_abort_poll_interval):
+                if item_id and work_loop_instance and work_loop_instance.get_col(item_id, COL_STATUS) == 'abort':
+                    print(f"\n[{_ts()}] {item_id}: abort requested — terminating OpenCode")
+                    proc.terminate()
+                    return
+
+        watcher = threading.Thread(target=_abort_watcher, daemon=True)
+        watcher.start()
+
+        with open(log_file, 'wb') as lf:
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                sys.stdout.buffer.write(chunk)
+                sys.stdout.buffer.flush()
+                lf.write(chunk)
+        proc.wait()
+        _stop_watcher.set()
+        watcher.join(timeout=1)
+
+        # Post-run budget check
+        if budget > 0 and proc.returncode == 0:
+            self._check_budget(item_id, budget, log_file)
+
+        # Session cleanup
+        self._cleanup_session(item_id)
+
+        return proc.returncode
+
+    def _check_budget(self, item_id: str | None, budget: float, log_file: Path) -> None:
+        """Check opencode stats post-run and cap cost in CONVERSATION.md."""
+        try:
+            result = subprocess.run(
+                ["opencode", "stats", "--project", item_id or "work-loop"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode == 0:
+                # Parse cost from stats output; format varies but typically has a dollar amount
+                cost_match = re.search(r'\$([\d.]+)', result.stdout)
+                if cost_match:
+                    cost = float(cost_match.group(1))
+                    if cost > budget:
+                        print(f"[{_ts()}] {item_id}: OpenCode cost ${cost:.2f} exceeded budget ${budget:.2f}")
+        except FileNotFoundError:
+            pass  # opencode not installed
+        except Exception as e:
+            print(f"[{_ts()}] WARNING: budget check failed for {item_id}: {e}")
+
+    def _cleanup_session(self, item_id: str | None) -> None:
+        """Delete OpenCode session to avoid accumulation."""
+        try:
+            result = subprocess.run(
+                ["opencode", "session", "list", "-j"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode != 0:
+                return
+            sessions = json.loads(result.stdout).get('sessions', [])
+            for sess in sessions:
+                sess_id = sess.get('id', '')
+                sess_title = sess.get('title', '')
+                if item_id and (sess_id == item_id or sess_title == item_id):
+                    subprocess.run(
+                        ["opencode", "session", "delete", sess_id],
+                        capture_output=True, timeout=10,
+                    )
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass  # non-fatal
+
+    def launcher_script(self, item_id: str, ts_str: str, budget: float, mode: str, work_dir: str | None, remote_work_dir: str) -> str:
+        model_arg = ""
+        if hasattr(self, '_model') and self._model:
+            model_arg = f"--model {self._model} "
+        if mode == "implement":
+            prompt_file = "IMPL-PROMPT.md"
+            extra_vars = f"$'\\nITEM_ID: {item_id}\\nWORK_LOOP_DIR: {remote_work_dir}\\nITEM_DIR: {remote_work_dir}/{item_id}'"
+            rwd_capture = 'RWD="$(pwd)"\n'
+            cd_work = f"cd {work_dir}\n" if work_dir else ""
+            log_redir = f'> "$RWD/.logs/{ts_str}_{item_id}.log" 2>&1'
+            done_dir = '$RWD'
+        elif mode == "resolved":
+            prompt_file = "RESOLVE-PROMPT.md"
+            extra_vars = f"$'\\nITEM_ID: {item_id}'"
+            rwd_capture = ""
+            cd_work = ""
+            log_redir = f'> ".logs/{ts_str}_{item_id}.log" 2>&1'
+            done_dir = '.'
+        else:
+            prompt_file = "LOOP-PROMPT.md"
+            extra_vars = f"$'\\nITEM_ID: {item_id}'"
+            rwd_capture = ""
+            cd_work = ""
+            log_redir = f'> ".logs/{ts_str}_{item_id}.log" 2>&1'
+            done_dir = '.'
+        return (
+            "#!/bin/bash\n"
+            f"cd {remote_work_dir}\n"
+            "mkdir -p .logs\n"
+            f"{rwd_capture}"
+            f'PROMPT="$(cat {prompt_file})"{extra_vars}\n'
+            f"{cd_work}"
+            f'opencode run --auto --format json --title {item_id} {model_arg}"$PROMPT" {log_redir} &\n'
+            f'echo $! > {done_dir}/{item_id}/.pid\n'
+            f"wait $!\n"
+            f'echo $? > {done_dir}/{item_id}/.done\n'
+        )
+
+    def agent_dir_name(self) -> str:
+        return ".opencode"
+
+    def cost_injection(self, work_dir: Path, item_id: str, started_after: str = '') -> None:
+        # OpenCode doesn't have a direct cost injection equivalent; skip silently
+        pass
+
+
+# Module-level references set by WorkLoop.__init__ for use in harness abort watchers
+work_dir_from_config: Path = Path.home()
+work_loop_instance = None
 
 COL_ID = 1
 COL_TITLE = 2
@@ -50,15 +377,34 @@ def _is_data_row(cols: list[str]) -> bool:
 
 
 class WorkLoop:
-    def __init__(self, work_dir: Path, max_budget: float, script_dir: Path | None = None):
-        self.work_dir = work_dir
-        self.script_dir = script_dir if script_dir is not None else work_dir
-        self.max_budget = max_budget
-        self.remote_work_dir = REMOTE_WORK_DIR
-        self.work_file = work_dir / "WORK.md"
-        self.prompt_file = self.script_dir / "LOOP-PROMPT.md"
-        self.log_dir = work_dir / ".logs"
+    def __init__(self, config: dict, script_dir: Path | None = None):
+        self.config = config
+        self.work_dir = Path(config['work_dir'])
+        self.script_dir = script_dir if script_dir is not None else self.work_dir
+        self.harness_type = config['harness']['type']
+        self.max_budget = config.get('harness', {}).get('max_budget_usd', 10.00)
+        self.remote_work_dir = config.get('remote', {}).get('work_dir', '~/Work-Loop')
+        self.work_file = self.work_dir / "WORK.md"
+        self.log_dir = self.work_dir / ".logs"
         self._stop = False
+
+        # Build harness
+        if self.harness_type == 'opencode':
+            self.harness = OpenCodeHarness()
+            self.harness._model = config['harness'].get('model', '')
+        else:
+            self.harness = ClaudeHarness()
+        self.harness._abort_poll_interval = 3
+
+        # Set module-level refs for harness abort watchers
+        global work_dir_from_config, work_loop_instance
+        work_dir_from_config = self.work_dir
+        work_loop_instance = self
+
+        # Prompt files — harness type determines agent dir but prompts stay the same
+        self.prompt_file = self.script_dir / "LOOP-PROMPT.md"
+        self.impl_prompt_file = self.script_dir / "IMPL-PROMPT.md"
+        self.resolve_prompt_file = self.script_dir / "RESOLVE-PROMPT.md"
 
     # -------------------------------------------------------------------------
     # WORK.md I/O
@@ -321,7 +667,7 @@ class WorkLoop:
         )
 
     # -------------------------------------------------------------------------
-    # Claude execution
+    # Harness execution
     # -------------------------------------------------------------------------
 
     def extract_work_dir(self, item_id: str) -> str:
@@ -339,95 +685,13 @@ class WorkLoop:
         print(f"[{_ts()}] WARNING: no 'work_dir:' found in {item_id}/CONVERSATION.md — using loop root")
         return str(self.work_dir)
 
-    def run_claude(self, prompt: str, log_file: Path, budget: float, cwd: str | None = None, item_id: str | None = None) -> int:
-        debug_file = log_file.with_suffix('.debug')
-        cmd = [
-            "claude", "--print",
-            "--permission-mode", "auto",
-            "--max-budget-usd", str(budget),
-            "--debug-file", str(debug_file),
-            prompt,
-        ]
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            cwd=cwd or str(self.work_dir),
-        )
-
-        _stop_watcher = threading.Event()
-        _abort_poll_interval = getattr(self, "_abort_poll_interval", 3)
-
-        def _abort_watcher():
-            while not _stop_watcher.wait(timeout=_abort_poll_interval):
-                if item_id and self.get_col(item_id, COL_STATUS) == 'abort':
-                    print(f"\n[{_ts()}] {item_id}: abort requested — terminating Claude")
-                    proc.terminate()
-                    return
-
-        watcher = threading.Thread(target=_abort_watcher, daemon=True)
-        watcher.start()
-
-        with open(log_file, 'wb') as lf:
-            while True:
-                chunk = proc.stdout.read(4096)
-                if not chunk:
-                    break
-                sys.stdout.buffer.write(chunk)
-                sys.stdout.buffer.flush()
-                lf.write(chunk)
-        proc.wait()
-        _stop_watcher.set()
-        watcher.join(timeout=1)
-        return proc.returncode
+    def _run_harness(self, prompt: str, log_file: Path, budget: float, cwd: str | None = None, item_id: str | None = None) -> int:
+        """Delegate to the configured harness."""
+        return self.harness.run(prompt, budget, cwd, item_id, log_file)
 
     def _inject_session_cost(self, item_id: str, started_after: str = '') -> None:
-        """Append ' — $X.XX' to the newest '## date | Claude' heading in CONVERSATION.md.
-
-        started_after: ISO 8601 UTC timestamp; filters to sessions active after this time
-        so that a concurrent or prior session is not mistakenly attributed.
-        CONVERSATION.md is prepended (newest entry at top), so count=1 correctly targets
-        the most recent Claude heading.
-        """
-        try:
-            result = subprocess.run(
-                ["ccusage", "session", "-j"],
-                capture_output=True, text=True, timeout=15,
-            )
-            if result.returncode != 0:
-                return
-            data = json.loads(result.stdout)
-            sessions = data.get('session', [])
-            if not sessions:
-                return
-            # Scope to sessions active after this run started (avoids picking a concurrent session)
-            if started_after:
-                sessions = [s for s in sessions
-                            if s.get('metadata', {}).get('lastActivity', '') >= started_after]
-            if not sessions:
-                return
-            latest = max(sessions, key=lambda s: s.get('metadata', {}).get('lastActivity', ''))
-            cost = latest.get('totalCost', 0)
-            if not cost:
-                return
-            conv_file = self.work_dir / item_id / "CONVERSATION.md"
-            if not conv_file.exists():
-                return
-            content = conv_file.read_text()
-            # [^—\n]* prevents double-patching a heading already annotated with ' — $X.XX'
-            patched = re.sub(
-                r'^(## \d{4}-\d{2}-\d{2} \| Claude[^—\n]*)$',
-                rf'\1 — ${cost:.2f}',
-                content,
-                count=1,
-                flags=re.MULTILINE,
-            )
-            if patched != content:
-                conv_file.write_text(patched)
-        except FileNotFoundError:
-            pass  # ccusage not installed — cost annotation skipped
-        except Exception as e:
-            print(f"[{_ts()}] WARNING: _inject_session_cost failed for {item_id}: {e}")
+        """Append cost info to CONVERSATION.md after a successful run."""
+        self.harness.cost_injection(self.work_dir, item_id, started_after)
 
     def prepend_abort_notice(self, item_id: str, date_str: str, budget: float, cause: str = "budget exceeded") -> None:
         conv_file = self.work_dir / item_id / "CONVERSATION.md"
@@ -438,7 +702,7 @@ class WorkLoop:
         conv_file.write_text(notice + existing)
 
     def _classify_failure(self, item_id: str, ts_str: str) -> str:
-        """Return 'auth', 'budget', or 'unknown' by inspecting the log file."""
+        """Return 'budget' or 'unknown' by inspecting the log file."""
         log_file = self.log_dir / f"{ts_str}_{item_id}.log"
         if not log_file.exists():
             return "unknown"
@@ -446,8 +710,6 @@ class WorkLoop:
             lower = log_file.read_text(errors='replace').lower()
         except OSError:
             return "unknown"
-        if any(p in lower for p in ("apikeyhelper failed", "no valid kerberos", "failed to authenticate")):
-            return "auth"
         if any(p in lower for p in ("budget", "cost limit", "exceeded")):
             return "budget"
         return "unknown"
@@ -495,9 +757,9 @@ class WorkLoop:
         )
 
         print(f"[{_ts()}] Processing: {item_id} (mode: {mode}, budget: ${budget}, cwd: {cwd})")
-        exit_code = self.run_claude(prompt, log_file, budget, cwd=cwd, item_id=item_id)
+        exit_code = self._run_harness(prompt, log_file, budget, cwd=cwd, item_id=item_id)
 
-        # Re-read status: user may have set it to 'abort' while Claude was running
+        # Re-read status: user may have set it to 'abort' while harness was running
         current_status = self.get_col(item_id, COL_STATUS)
 
         self.update_col(item_id, COL_LAST_UPDATED, today)
@@ -508,10 +770,10 @@ class WorkLoop:
             print(f"[{_ts()}] {item_id}: aborted by user — status left as abort")
         elif exit_code != 0:
             failure = self._classify_failure(item_id, ts)
-            if failure == "auth":
-                budget_label, cause, msg = f"${budget} - AUTH-EXPIRED", "Kerberos auth expired", f"[{_ts()}] {item_id}: Kerberos auth expired — marked needs-review"
-            else:
+            if failure == "budget":
                 budget_label, cause, msg = f"${budget} - EXCEEDED", "budget exceeded", f"[{_ts()}] {item_id}: budget exceeded — marked needs-review"
+            else:
+                budget_label, cause, msg = f"${budget} - FAILED", "run failed", f"[{_ts()}] {item_id}: run failed — marked needs-review"
             self.update_col(item_id, COL_STATUS, "needs-review")
             self.update_col(item_id, COL_BUDGET, budget_label)
             self.prepend_abort_notice(item_id, today, budget, cause)
@@ -530,48 +792,8 @@ class WorkLoop:
     # -------------------------------------------------------------------------
 
     def build_launcher(self, item_id: str, ts_str: str, budget: float, mode: str = "analyze", work_dir: str | None = None) -> str:
-        rwd = self.remote_work_dir
-        if mode == "implement":
-            prompt_file = "IMPL-PROMPT.md"
-            extra_vars = f"$'\\nITEM_ID: {item_id}\\nWORK_LOOP_DIR: {rwd}\\nITEM_DIR: {rwd}/{item_id}'"
-            rwd_capture = 'RWD="$(pwd)"\n'
-            cd_work = f"cd {work_dir}\n" if work_dir else ""
-            debug_flag = f'--debug-file "$RWD/.logs/{ts_str}_{item_id}.debug" '
-            log_redir = f'> "$RWD/.logs/{ts_str}_{item_id}.log" 2>&1'
-            done_dir = '$RWD'
-        elif mode == "resolved":
-            prompt_file = "RESOLVE-PROMPT.md"
-            extra_vars = f"$'\\nITEM_ID: {item_id}'"
-            rwd_capture = ""
-            cd_work = ""
-            debug_flag = f'--debug-file ".logs/{ts_str}_{item_id}.debug" '
-            log_redir = f'> ".logs/{ts_str}_{item_id}.log" 2>&1'
-            done_dir = '.'
-        else:
-            prompt_file = "LOOP-PROMPT.md"
-            extra_vars = f"$'\\nITEM_ID: {item_id}'"
-            rwd_capture = ""
-            cd_work = ""
-            debug_flag = f'--debug-file ".logs/{ts_str}_{item_id}.debug" '
-            log_redir = f'> ".logs/{ts_str}_{item_id}.log" 2>&1'
-            done_dir = '.'
-        return (
-            "#!/bin/bash\n"
-            # nvm is initialized in .bashrc which non-interactive SSH sessions skip.
-            # Load it explicitly so claude is on PATH regardless of shell mode.
-            'export NVM_DIR="$HOME/.nvm"\n'
-            '[ -s "$NVM_DIR/nvm.sh" ] && \\. "$NVM_DIR/nvm.sh"\n'
-            f"cd {rwd}\n"
-            "mkdir -p .logs\n"
-            f"{rwd_capture}"
-            f'PROMPT="$(cat {prompt_file})"{extra_vars}\n'
-            f"{cd_work}"
-            # Background claude so we can record PID immediately; enables remote abort.
-            f'claude --print --permission-mode auto --max-budget-usd {budget} {debug_flag}"$PROMPT" {log_redir} &\n'
-            f'echo $! > {done_dir}/{item_id}/.pid\n'
-            f"wait $!\n"
-            f'echo $? > {done_dir}/{item_id}/.done\n'
-        )
+        """Delegate to the configured harness for launcher script generation."""
+        return self.harness.launcher_script(item_id, ts_str, budget, mode, work_dir, self.remote_work_dir)
 
     # -------------------------------------------------------------------------
     # Remote dispatch
@@ -595,10 +817,10 @@ class WorkLoop:
             if resolve_prompt_file.exists():
                 _run(["rsync", "-avz", str(resolve_prompt_file), f"{remote_host}:{rwd}/"])
 
-        claude_dir = self.script_dir / ".claude"
-        if claude_dir.exists():
-            _run(["ssh", remote_host, f"mkdir -p {rwd}/.claude"])
-            _run(["rsync", "-avz", str(claude_dir) + "/", f"{remote_host}:{rwd}/.claude/"])
+        agent_dir = self.script_dir / self.harness.agent_dir_name()
+        if agent_dir.exists():
+            _run(["ssh", remote_host, f"mkdir -p {rwd}/{self.harness.agent_dir_name()}"])
+            _run(["rsync", "-avz", str(agent_dir) + "/", f"{remote_host}:{rwd}/{self.harness.agent_dir_name()}/"])
 
         title = self.get_item_title(item_id)
         stub = self.build_stub_work_md(item_id, title)
@@ -616,7 +838,7 @@ class WorkLoop:
 
         launcher_content = self.build_launcher(item_id, ts_str, budget, mode=mode, work_dir=work_dir)
         with tempfile.NamedTemporaryFile(
-            mode='w', prefix=f".claude-launch-{item_id}-", suffix=".sh", delete=False
+            mode='w', prefix=f".{self.harness_type}-launch-{item_id}-", suffix=".sh", delete=False
         ) as tmp:
             tmp.write(launcher_content)
             launcher_tmp = tmp.name
@@ -683,10 +905,10 @@ class WorkLoop:
 
         if claude_exit != 0:
             failure = self._classify_failure(item_id, ts_str)
-            if failure == "auth":
-                budget_label, cause, msg = f"${budget} - AUTH-EXPIRED", "Kerberos auth expired", f"[{_ts()}] {item_id}: Kerberos auth expired — synced back, marked needs-review"
-            else:
+            if failure == "budget":
                 budget_label, cause, msg = f"${budget} - EXCEEDED", "budget exceeded", f"[{_ts()}] {item_id}: remote budget exceeded — synced back, marked needs-review"
+            else:
+                budget_label, cause, msg = f"${budget} - FAILED", "run failed", f"[{_ts()}] {item_id}: remote run failed — synced back, marked needs-review"
             self.update_col(item_id, COL_STATUS, "needs-review")
             self.update_col(item_id, COL_BUDGET, budget_label)
             self.prepend_abort_notice(item_id, today, budget, cause)
@@ -699,14 +921,6 @@ class WorkLoop:
             else:
                 self.update_col(item_id, COL_STATUS, "needs-review")
                 print(f"[{_ts()}] {item_id}: remote completed — synced back, marked needs-review")
-
-    def _remote_has_kerberos(self, remote_host: str) -> bool:
-        """Return True if the remote host has a valid Kerberos ticket."""
-        result = subprocess.run(
-            ["ssh", "-o", "ConnectTimeout=5", remote_host, "klist -s"],
-            capture_output=True,
-        )
-        return result.returncode == 0
 
     def _ts_str_from_log_col(self, item_id: str, remote_host: str) -> str | None:
         """Return the dispatch ts_str for item_id, from Log column or by globbing the remote."""
@@ -1246,12 +1460,6 @@ class WorkLoop:
             print(f"[{_ts()}] {item_id}: no Location/Locations in RUNS.md — skipping")
             self.update_col(item_id, COL_STATUS, 'needs-review')
             return
-        for loc in locations:
-            _, user_host, _ = self._parse_location(loc)
-            if not self._remote_has_kerberos(user_host):
-                self.update_col(item_id, COL_STATUS, 'blocked')
-                print(f"[{_ts()}] {item_id}: Kerberos expired on {user_host} — marked blocked")
-                return
         run_id = self._generate_run_id(item_id)
         title = config['params'] if config['params'] else run_id
         self.update_col(item_id, COL_STATUS, 'running')
@@ -1374,8 +1582,6 @@ class WorkLoop:
                 print("")
                 idle_shown = False
 
-            kerberos_ok: dict[str, bool] = {}
-
             for item_id in ready:
                 if self.get_item_type(item_id) == 'script':
                     print(f"[{_ts()}] Processing script item: {item_id}")
@@ -1388,12 +1594,6 @@ class WorkLoop:
                 ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
                 if location != "local":
-                    if location not in kerberos_ok:
-                        kerberos_ok[location] = self._remote_has_kerberos(location)
-                    if not kerberos_ok[location]:
-                        self.update_col(item_id, COL_STATUS, "blocked")
-                        print(f"[{_ts()}] {item_id}: Kerberos ticket expired on {location} — marked blocked (run: kinit on {location}, then set ready)")
-                        continue
                     mode = self.get_col(item_id, COL_STATUS)
                     print(f"[{_ts()}] Dispatching to {location}: {item_id} (mode: {mode}, budget: ${budget})")
                     self.update_col(item_id, COL_STATUS, "in-progress")
@@ -1422,7 +1622,16 @@ def _run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
 
 
 def main() -> None:
-    wl = WorkLoop(WORK_DIR, MAX_BUDGET, script_dir=SCRIPT_DIR)
+    # Discover config.json: look in SCRIPT_DIR first, then parent of work_dir
+    script_dir = Path(__file__).parent
+    config_path = script_dir / "config.json"
+    if not config_path.exists():
+        # Try to find it relative to where work_dir might be
+        home_work = Path.home() / "MyNotebook" / "Work-Loop-Items"
+        if home_work.exists():
+            config_path = script_dir / "config.json"
+    cfg = load_config(config_path)
+    wl = WorkLoop(cfg, script_dir=script_dir)
     wl.run()
 
 
