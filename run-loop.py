@@ -444,7 +444,7 @@ class WorkLoop:
         return ''
 
     # Status values that trigger processing (ready = backwards-compat alias for analyze)
-    TRIGGER_STATUSES = {'ready', 'analyze', 'implement', 'resolved'}
+    TRIGGER_STATUSES = {'ready', 'analyze', 'implement', 'resolved', 'research'}
 
     def get_ready_items(self) -> list[str]:
         items = []
@@ -482,8 +482,13 @@ class WorkLoop:
         item_dir = self.work_dir / item_id
         item_dir.mkdir(parents=True, exist_ok=True)
 
+        if self.get_item_type(item_id) == 'research':
+            config = self._parse_runs_md(item_id)
+            self._initialize_research_item(item_id, config)
+            return
+
         if self.get_item_type(item_id) == 'script':
-            config = self._parse_runs_md_config(item_id)
+            config = self._parse_runs_md(item_id)
             initial_status = 'scheduled' if config.get('schedule') else 'ready'
             self.update_col(item_id, COL_STATUS, initial_status)
             print(f"[{_ts()}] Initialized script item: {item_id} (status: {initial_status})")
@@ -500,6 +505,21 @@ class WorkLoop:
 
         self.update_col(item_id, COL_STATUS, "ready")
         print(f"[{_ts()}] Initialized new item: {item_id}")
+
+    def _initialize_research_item(self, item_id: str, config: dict) -> None:
+        """Create folder, seed CONVERSATION.md and RUNS.md for a research item."""
+        item_dir = self.work_dir / item_id
+        item_dir.mkdir(parents=True, exist_ok=True)
+
+        conv_file = item_dir / "CONVERSATION.md"
+        if not conv_file.exists():
+            topic = config.get('topic', item_id)
+            today = datetime.now().strftime('%Y-%m-%d')
+            conv_file.write_text(f"## {today} | User\n\nResearch item: {topic}\n")
+
+        initial_status = 'scheduled' if config.get('schedule') else 'ready'
+        self.update_col(item_id, COL_STATUS, initial_status)
+        print(f"[{_ts()}] Initialized research item: {item_id} (status: {initial_status})")
 
     def _auto_init_conversation(self, item_id: str) -> None:
         """Seed CONVERSATION.md from Title if missing (no status change)."""
@@ -729,7 +749,32 @@ class WorkLoop:
         mode = self.get_col(item_id, COL_STATUS)  # read trigger status BEFORE overwriting
         self.update_col(item_id, COL_STATUS, "in-progress")
 
-        if mode == "implement":
+        if mode == "research":
+            config = self._parse_runs_md(item_id)
+            research_prompt_file = self.script_dir / "RESEARCH-PROMPT.md"
+            if research_prompt_file.exists():
+                prompt_text = research_prompt_file.read_text()
+            else:
+                prompt_text = self.prompt_file.read_text()
+                print(f"[{_ts()}] WARNING: RESEARCH-PROMPT.md not found, using LOOP-PROMPT.md")
+
+            sources = config.get('sources', [])
+            sources_str = '\n'.join(f'- {s.strip()}' for s in sources) if sources else '(none)'
+            context = config.get('research_context', '')
+
+            item_dir = str(self.work_dir / item_id)
+            prompt = (
+                f"{prompt_text}\n\n"
+                f"topic: {config.get('topic', '')}\n"
+                f"note_path: {config.get('note_path', '')}\n"
+                f"sources:\n{sources_str}\n"
+                f"research_context:\n{context}\n"
+                f"\nITEM_ID: {item_id}\n"
+                f"WORK_LOOP_DIR: {self.work_dir}\n"
+                f"ITEM_DIR: {item_dir}"
+            )
+            cwd = str(self.work_dir)
+        elif mode == "implement":
             impl_prompt_file = self.script_dir / "IMPL-PROMPT.md"
             if impl_prompt_file.exists():
                 prompt_text = impl_prompt_file.read_text()
@@ -748,13 +793,14 @@ class WorkLoop:
             prompt_text = self.prompt_file.read_text()
             cwd = str(self.work_dir)
 
-        item_dir = str(self.work_dir / item_id)
-        prompt = (
-            f"{prompt_text}\n\n"
-            f"ITEM_ID: {item_id}\n"
-            f"WORK_LOOP_DIR: {self.work_dir}\n"
-            f"ITEM_DIR: {item_dir}"
-        )
+        if mode != "research":
+            item_dir = str(self.work_dir / item_id)
+            prompt = (
+                f"{prompt_text}\n\n"
+                f"ITEM_ID: {item_id}\n"
+                f"WORK_LOOP_DIR: {self.work_dir}\n"
+                f"ITEM_DIR: {item_dir}"
+            )
 
         print(f"[{_ts()}] Processing: {item_id} (mode: {mode}, budget: ${budget}, cwd: {cwd})")
         exit_code = self._run_harness(prompt, log_file, budget, cwd=cwd, item_id=item_id)
@@ -781,7 +827,28 @@ class WorkLoop:
         else:
             self.update_col(item_id, COL_BUDGET, f"${budget}")
             self._inject_session_cost(item_id, run_start)
-            if mode == "resolved":
+            if mode == "research":
+                config = self._parse_runs_md(item_id)
+                run_dir = self.work_dir / item_id / "runs"
+                latest_run = None
+                if run_dir.exists():
+                    dirs = [d for d in run_dir.iterdir() if d.is_dir()]
+                    if dirs:
+                        latest_run = sorted(dirs, reverse=True)[0].name
+                if latest_run:
+                    research_file = run_dir / latest_run / "research.md"
+                    if research_file.exists():
+                        lines = research_file.read_text().split('\n')
+                        summary = lines[1].strip('# -').strip() if len(lines) > 1 else "Research complete"
+                    else:
+                        summary = "Research complete"
+                    self._append_research_run(item_id, latest_run, summary)
+                if config.get('schedule'):
+                    self.update_col(item_id, COL_STATUS, "scheduled")
+                else:
+                    self.update_col(item_id, COL_STATUS, "done")
+                print(f"[{_ts()}] {item_id}: research complete — status={'scheduled' if config.get('schedule') else 'done'}")
+            elif mode == "resolved":
                 self._move_row_to_done(item_id)
                 print(f"[{_ts()}] {item_id}: resolved — moved to Done section")
             else:
@@ -1049,36 +1116,47 @@ class WorkLoop:
     # -------------------------------------------------------------------------
 
     def get_item_type(self, item_id: str) -> str:
-        """Return 'script' if RUNS.md exists for this item, else 'conversation'."""
-        return 'script' if (self.work_dir / item_id / "RUNS.md").exists() else 'conversation'
+        """Return 'research', 'script', or 'conversation'."""
+        runs_file = self.work_dir / item_id / "RUNS.md"
+        if not runs_file.exists():
+            return 'conversation'
+        config = self._parse_runs_md(item_id)
+        if config.get('type') == 'research':
+            return 'research'
+        return 'script'
 
-    def _parse_runs_md_config(self, item_id: str) -> dict:
-        """Parse the ## Config block from RUNS.md, return normalized dict."""
+    def _parse_config_block(self, text: str) -> dict:
+        """Parse a ## Config block from text, return normalized dict."""
         config = {
             'command': '', 'params': '', 'schedule': '',
             'location': '', 'locations': [],
             'heartbeat_file': '', 'timeout': DEFAULT_TIMEOUT_MIN,
             'aggregation_script': '', 'analysis_prompt': '',
+            'type': '', 'topic': '', 'note_path': '', 'sources': [],
         }
-        runs_file = self.work_dir / item_id / "RUNS.md"
-        if not runs_file.exists():
-            return config
-        text = runs_file.read_text()
         m = re.search(r'^## Config\s*\n(.*?)(?=^##|\Z)', text, re.MULTILINE | re.DOTALL)
         if not m:
             return config
         in_locations = False
+        in_sources = False
         for line in m.group(1).splitlines():
             stripped = line.strip()
             if not stripped:
                 in_locations = False
+                in_sources = False
                 continue
             if in_locations and line.startswith('  '):
                 loc = stripped.strip('`')
                 if loc:
                     config['locations'].append(loc)
                 continue
+            if in_sources and line.startswith('  '):
+                src = stripped.strip('`')
+                if src:
+                    config['sources'].append(src)
+                continue
             in_locations = False
+            in_sources = False
             if ':' not in line:
                 continue
             key, _, val = line.partition(':')
@@ -1094,6 +1172,8 @@ class WorkLoop:
                 config['location'] = val
             elif key_n == 'locations':
                 in_locations = True
+            elif key_n == 'sources':
+                in_sources = True
             elif key_n == 'heartbeat_file':
                 config['heartbeat_file'] = val
             elif key_n == 'timeout':
@@ -1105,7 +1185,36 @@ class WorkLoop:
                 config['aggregation_script'] = val.strip('`')
             elif key_n == 'analysis_prompt':
                 config['analysis_prompt'] = val
+            elif key_n == 'type':
+                config['type'] = val
+            elif key_n == 'topic':
+                config['topic'] = val
+            elif key_n == 'note_path':
+                config['note_path'] = val
         return config
+
+    def _parse_runs_md(self, item_id: str) -> dict:
+        """Parse RUNS.md — returns config dict with 'research_context' key."""
+        runs_file = self.work_dir / item_id / "RUNS.md"
+        if not runs_file.exists():
+            return self._empty_config()
+        text = runs_file.read_text()
+        config = self._parse_config_block(text)
+        # Parse Research Context block
+        m = re.search(r'^## Research Context\s*\n(.*?)(?=^##|\Z)', text, re.MULTILINE | re.DOTALL)
+        config['research_context'] = m.group(1).strip() if m else ''
+        return config
+
+    def _empty_config(self) -> dict:
+        """Return a default/empty config dict."""
+        return {
+            'command': '', 'params': '', 'schedule': '',
+            'location': '', 'locations': [],
+            'heartbeat_file': '', 'timeout': DEFAULT_TIMEOUT_MIN,
+            'aggregation_script': '', 'analysis_prompt': '',
+            'type': '', 'topic': '', 'note_path': '', 'sources': [],
+            'research_context': '',
+        }
 
     def _cron_should_run(self, cron_str: str, now: datetime) -> bool:
         """Return True if cron_str (5-field) fires at the given datetime."""
@@ -1199,6 +1308,38 @@ class WorkLoop:
                 last_data_idx = i
         if table_sep_idx < 0:
             header = "\n| ID | Title | Status | Last Updated | Log |\n|---|---|---|---|---|\n"
+            text += header + row
+            runs_file.write_text(text)
+        else:
+            insert_at = (last_data_idx + 1) if last_data_idx >= 0 else (table_sep_idx + 1)
+            lines.insert(insert_at, row)
+            runs_file.write_text("".join(lines))
+
+    def _create_run_dir(self, item_id: str, run_id: str) -> Path:
+        """Create runs/{run_id}/ directory and return its path."""
+        run_dir = self.work_dir / item_id / "runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        return run_dir
+
+    def _append_research_run(self, item_id: str, run_id: str, summary: str) -> None:
+        """Append a new row to RUNS.md run history table for research items."""
+        runs_file = self.work_dir / item_id / "RUNS.md"
+        today = datetime.now().strftime('%Y-%m-%d')
+        summary_link = f"[{summary}](runs/{run_id}/)"
+        row = f"| {run_id} | {summary_link} | running | {today} |\n"
+        text = runs_file.read_text() if runs_file.exists() else ""
+        lines = text.splitlines(keepends=True)
+        table_sep_idx = -1
+        last_data_idx = -1
+        for i, line in enumerate(lines):
+            stripped = line.lstrip()
+            if stripped.startswith('| --') or stripped.startswith('|--'):
+                if line.count('|') >= 4:
+                    table_sep_idx = i
+            elif table_sep_idx >= 0 and line.startswith('|'):
+                last_data_idx = i
+        if table_sep_idx < 0:
+            header = "\n| ID | Summary | Status | Last Updated |\n|---|---|---|---|\n"
             text += header + row
             runs_file.write_text(text)
         else:
@@ -1485,8 +1626,8 @@ class WorkLoop:
             return
         self._continue_polling(item_id, run_id, config, state)
 
-    def get_scheduled_script_items(self) -> list[str]:
-        """Return script item IDs whose Schedule cron fires now (status: scheduled)."""
+    def get_scheduled_items(self) -> list[str]:
+        """Return item IDs whose cron fires now (both script and research items)."""
         now = datetime.now()
         items = []
         for line in self._read_lines():
@@ -1501,9 +1642,10 @@ class WorkLoop:
             item_id = cols[COL_ID].strip()
             if cols[COL_STATUS].strip() != 'scheduled':
                 continue
-            if self.get_item_type(item_id) != 'script':
+            item_type = self.get_item_type(item_id)
+            if item_type not in ('script', 'research'):
                 continue
-            config = self._parse_runs_md_config(item_id)
+            config = self._parse_runs_md(item_id)
             if self._cron_should_run(config.get('schedule', ''), now):
                 items.append(item_id)
         return items
@@ -1566,8 +1708,8 @@ class WorkLoop:
             for item_id in self.get_new_items():
                 self.initialize_new_item(item_id)
 
-            # Promote scheduled script items whose cron fires now
-            for item_id in self.get_scheduled_script_items():
+            # Promote scheduled items whose cron fires now
+            for item_id in self.get_scheduled_items():
                 self.update_col(item_id, COL_STATUS, 'ready')
 
             ready = self.get_ready_items()
@@ -1583,7 +1725,15 @@ class WorkLoop:
                 idle_shown = False
 
             for item_id in ready:
-                if self.get_item_type(item_id) == 'script':
+                item_type = self.get_item_type(item_id)
+
+                if item_type == 'research':
+                    budget = self.get_item_budget(item_id)
+                    self.process_local(item_id, budget)
+                    print("---")
+                    continue
+
+                if item_type == 'script':
                     print(f"[{_ts()}] Processing script item: {item_id}")
                     self.process_script_item(item_id)
                     print("---")

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Work-Loop is an automated harness that runs AI agents (Claude or OpenCode) on work items one at a time. Each item gets a fresh context, and items can run locally or be dispatched to remote hosts over SSH. The loop also supports **script items** — automated command dispatch to one or more machines with cron scheduling, multi-machine polling, and fan-in aggregation.
+Work-Loop is an automated harness that runs AI agents (Claude or OpenCode) on work items one at a time. Each item gets a fresh context, and items can run locally or be dispatched to remote hosts over SSH. The loop also supports **script items** — automated command dispatch to one or more machines with cron scheduling, multi-machine polling, and fan-in aggregation — and **research items** — automated web research that fetches sources, compares against existing notes, and writes updated notes with per-run summaries.
 
 ## Quick Start
 
@@ -135,6 +135,64 @@ After all machines complete, the loop optionally:
 
 If either fails, the run status becomes `needs-review`.
 
+## Research Items
+
+Research items run an AI agent that fetches web sources, compares findings against an existing Obsidian note, and writes an updated version. They use `RUNS.md` for configuration (like script items) but the agent does the work via tool use (web fetch, file I/O) rather than dispatching shell commands.
+
+### Config Block
+
+Add a `## Config` section to `RUNS.md`:
+
+```markdown
+## Config
+type: research
+topic: AI Security
+note_path: [[AI Security]]
+sources:
+  https://arxiv.org/list/cs.CR/recent
+  https://openai.com/blog
+schedule: 0 6 * * 1        # optional cron expression
+timeout: 10                # optional: minutes before agent times out (default: 4)
+
+## Research Context
+Focus on: model vulnerabilities, alignment failures, supply chain risks
+Exclude: consumer AI apps, chatbot features
+Key papers to watch: [[AI Security/Papers]]
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `type` | Yes | Must be `research` |
+| `topic` | Yes | Human-readable topic name |
+| `note_path` | Yes | Obsidian wiki link to the target note |
+| `sources` | Yes | One or more URLs to fetch (indented list) |
+| `schedule` | No | Cron expression; if present, status starts as `scheduled` |
+| `timeout` | No | Minutes before agent times out (default: 4) |
+
+Everything after `## Research Context` (until the next `##` header or EOF) is injected verbatim into the agent prompt as scope and guidance.
+
+### Research Item States
+
+| Status | Meaning |
+|---|---|
+| `scheduled` | Has a cron schedule; promoted to `ready` when cron fires |
+| `ready` | Agent runs: fetches sources, updates note, writes summary |
+| `in-progress` | Agent is running |
+| `needs-review` | Agent finished; human must approve before next cycle |
+| `done` | No schedule configured and agent finished successfully |
+
+On success with a schedule, the status returns to `scheduled`. The human reviews during `needs-review` and sets back to `ready` to trigger the next cycle.
+
+### Run History
+
+Each research cycle appends a row to the table in `RUNS.md`:
+
+| ID | Summary | Status | Last Updated |
+|---|---|---|---|
+| 20260717-001 | [Added 3 new papers on model vulnerabilities](runs/20260717-001/) | success | 2026-07-17 |
+
+Per-run details are written to `runs/{run_id}/research.md` with changes, sources, and notes.
+
 ## Remote Dispatch
 
 When an item's Location is set to a remote host (e.g. `user@hostname`), the loop:
@@ -183,15 +241,16 @@ python3 -m pytest test_run_loop.py -v
 
 ## Prompt Files
 
-Three prompt files control agent behavior. They are injected automatically based on the item's status:
+Four prompt files control agent behavior. They are injected automatically based on the item's status:
 
 | File | Triggered By | Purpose |
 |---|---|---|
 | `LOOP-PROMPT.md` | `ready`, `analyze` | Multi-agent investigation with internal critic review |
 | `IMPL-PROMPT.md` | `implement` | Code implementation with code review |
 | `RESOLVE-PROMPT.md` | `resolved` | Problem/resolution summary |
+| `RESEARCH-PROMPT.md` | `research` | Fetch sources, compare against note, write updated note and summary |
 
-Each prompt receives `ITEM_ID`, `WORK_LOOP_DIR`, and `ITEM_DIR` as variables.
+Each prompt receives `ITEM_ID`, `WORK_LOOP_DIR`, and `ITEM_DIR` as variables. Research items also receive `topic`, `note_path`, `sources`, and `research_context`.
 
 ## Loop Execution Order
 
@@ -201,5 +260,5 @@ Each iteration of the loop:
 2. Resumes any running script items (polling recovery)
 3. Recovers any stalled remote jobs (polls `.done` sentinel)
 4. Initializes `new` items
-5. Promotes `scheduled` script items whose cron fires now
-6. Picks up `ready`/`analyze`/`implement`/`resolved` items and processes them
+5. Promotes `scheduled` script and research items whose cron fires now
+6. Picks up `ready`/`analyze`/`implement`/`resolved`/`research` items and processes them
