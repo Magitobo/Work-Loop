@@ -1,5 +1,7 @@
 # Research Agent — Code Snippets
 
+State: IMPLEMENTED
+
 **Reference for:** `plans/research-agent.md`
 
 ---
