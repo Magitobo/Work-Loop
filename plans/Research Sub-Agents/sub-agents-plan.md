@@ -1,5 +1,5 @@
-# Plan: Sub-Agents with Parent Agency
-
+π# Plan: Sub-Agents with Parent Agency
+222
 ## 1. Goal
 
 Enable work items to spawn and manage child research agents (sub-agents) through a propose/approve workflow. The parent agent acts as a delegated manager — it proposes structural changes to the Work-Loop, the user approves, and the agent executes.
@@ -36,7 +36,7 @@ Enable work items to spawn and manage child research agents (sub-agents) through
 | `CONVERSATION.md` | Main conversation thread | **Both** | Both |
 | `background.md` | User requirements/constraints | **User only** | Parent agent |
 | `context/*.md` | Shared research artifacts | **Parent + children** | Parent agent |
-| `children.md` | Parent's dashboard of all children | **Parent agent** | Parent agent |
+| `children.md` | Parent's dashboard of all children | **Parent agent** (lifecycle changes) / **Loop** (status transitions: cron promotions, run completions) | Parent agent |
 | `children/{name}/RUNS.md` | Child agent config + run history | **Parent** (config) / **Loop** (run rows) | Loop, parent |
 | `children/{name}/CONVERSATION.md` | Parent's management log for this child | **Parent agent** | Parent agent |
 | `children/{name}/runs/` | Run summaries (research.md) | **Loop** (after child runs) | Parent agent |
@@ -129,7 +129,16 @@ After a successful run:
 
 ## 4. Loop Changes
 
-All changes are additive — no existing behavior is modified.
+All changes are backwards-compatible — existing behavior is preserved but a few functions are extended with new keys/parameters.
+
+**Modifying (backward-compatible):**
+- `_parse_config_block()` — adds `parent` and `status` to the recognized keys dict; unrecognized keys are ignored so old RUNS.md files still parse cleanly
+- `_empty_config()` — adds `parent` and `status` defaults alongside existing keys
+- `_append_research_run()` — refactored to accept optional `runs_path: Path` parameter (defaults to top-level path, enabling reuse for child RUNS.md without duplicating the append logic)
+- Top-level RUNS.md schema — adds `Log` column to research items for consistency (schema migration is a one-time append, no backward incompatibility)
+
+**New methods:**
+- All `_get_*`, `get_children`, `_update_child_status`, `process_child`, `resume_running_children`, `_validate_note_path_uniqueness`, `_get_all_item_ids`, `_update_parent_children_md`
 
 ### 4.1 New Methods
 
@@ -140,6 +149,23 @@ Parses a child's RUNS.md using the same logic as top-level:
 - Extracts `## Research Context` block via regex (same as top-level)
 - Returns config dict with all standard keys plus `research_context`
 - `parent` and `status` keys come from the Config block (defaults: `status=ready` if missing)
+
+#### `_get_all_item_ids() -> list[str]`
+
+Returns all item IDs in the work directory (folder names under `work_dir`), **including those in the `## Done` section**. Unlike `get_ready_items()` and `get_scheduled_items()` which stop scanning at `## Done`, this method scans the full filesystem:
+
+```python
+def _get_all_item_ids(self) -> list[str]:
+    items = []
+    for entry in sorted(self.work_dir.iterdir()):
+        if entry.is_dir():
+            # Check for RUNS.md or CONVERSATION.md to confirm it's a real item
+            if (entry / "RUNS.md").exists() or (entry / "CONVERSATION.md").exists():
+                items.append(entry.name)
+    return items
+```
+
+This ensures children of completed parents continue to be discoverable — a `done` parent with scheduled children must keep those children firing.
 
 #### `_get_child_status(child_config: dict) -> str`
 
@@ -177,8 +203,12 @@ Processes a child as a research item:
   - Appends run row to child's RUNS.md history (reuse existing `_append_research_run()` with child path)
   - Updates `children.md`
   - If success + schedule → `scheduled`
-  - If success + no schedule → `ready`
+  - If success + no schedule → `done`
   - If failure → `needs-review`
+
+#### `_update_parent_children_md(parent_id: str) -> None`
+
+Rebuilds `children.md` for a parent by scanning `get_children()` and writing a fresh table. Called by the loop after status transitions (cron promotions, run completions) and by the parent agent after lifecycle changes (create/delete/update). Ensures both writers stay in sync — the loop writes on status changes, the parent writes on structural changes.
 
 #### `resume_running_children() -> None`
 
@@ -194,11 +224,16 @@ In `run()` method, after processing top-level ready items:
 # Process children after top-level items
 for parent_id in self._get_all_item_ids():       # includes done items
     for child_name, child_status, child_config in self.get_children(parent_id):
+        child_path = self.work_dir / parent_id / "children" / child_name / "RUNS.md"
         if child_status == 'scheduled' and child_config.get('schedule'):
             if self._cron_should_run(child_config['schedule']):
                 self._update_child_status(child_path, 'ready')
+                # Loop owns status transitions — update children.md
+                self._update_parent_children_md(parent_id)
         if child_status == 'ready':
             self.process_child(parent_id, child_name)
+            # After child completes, refresh children.md with new status
+            self._update_parent_children_md(parent_id)
 ```
 
 The `_get_all_item_ids()` includes all items (even `done` ones), because a done parent might still have active scheduled children.
@@ -216,7 +251,7 @@ For child agents, `note_path` is relative to the child's cwd (`children/{child_n
 
 ### 4.4 `note_path` Uniqueness Enforcement
 
-The loop should validate that no two children under the same parent target the same `note_path`. This is enforced in `process_child()` or at child creation time (in the parent's proposal execution). If a conflict is detected, the parent must resolve it before creating the child. The loop can detect conflicts by scanning all children's RUNS.md config files before processing.
+The loop validates that no two children under the same parent target the same `note_path`. Since the loop doesn't control child creation, uniqueness is enforced at **process time** — before dispatching a child, `process_child()` calls `_validate_note_path_uniqueness(parent_id)` which scans all siblings' RUNS.md files. If a conflict is detected, the child is skipped (status set to `needs-review`) and the parent is notified in its CONVERSATION.md on the next iteration to resolve the conflict. The parent agent's proposal workflow encourages unique paths, but the loop provides the hard enforcement.
 
 ## 5. Prompt Changes
 
@@ -424,7 +459,7 @@ Oliver: Yes, create it. Also make it run daily instead of weekly.
 | Child agent fails | Status set to `needs-review`. Parent sees this in next iteration and can propose re-run. |
 | Cron fires while child is `running` | Skipped (only promotes `scheduled` → `ready`). Child completes first. |
 | User directly edits child's RUNS.md | Loop reads user's edit. If `status:` changed, respects it. |
-| Two children with same `note_path` | **Prevented at creation time** — loop validates uniqueness of `note_path` within a parent's children. Parent agent proposes unique paths. |
+| Two children with same `note_path` | **Enforced at process time** — loop validates uniqueness before dispatching a child. Conflicts set child to `needs-review` and notify parent. |
 | Child created while loop is running | Loop picks it up on next iteration. No mid-iteration discovery. |
 | Parent has many children (50+) | Performance consideration — main loop scan is O(parents × children). Future optimization: only scan items with existing `children/` directories. |
 
@@ -437,20 +472,23 @@ Oliver: Yes, create it. Also make it run daily instead of weekly.
 | `_parse_child_runs_md` | Parses unified format, extracts config + research_context |
 | `_get_child_status` | Reads `status:` from config dict, defaults to `ready` |
 | `_get_parent_id` | Reads `parent:` from config dict |
+| `_get_all_item_ids` | Returns all item folder names (including done items) |
 | `get_children` (no children) | Empty parent folder returns [] |
 | `get_children` (with children) | Returns list of (name, status, config) tuples |
 | `get_children` (mixed statuses) | Returns all children regardless of status |
 | `get_children` (orphan detection — wrong parent) | Skips children with wrong parent_id |
 | `get_children` (orphan detection — missing parent) | Skips children with empty/None `parent:` key |
+| `get_children` (done parent) | Finds children of done parents (filesystem scan, not WORK.md parse) |
 | `process_child` (success + schedule) | Status transitions: ready → running → scheduled |
 | `process_child` (success + no schedule) | Status transitions: ready → running → done |
 | `process_child` (failure) | Status transitions: ready → running → needs-review |
 | `_update_child_status` | Correctly updates `status:` line in Config block |
 | `_update_child_status` (abort) | Correctly sets abort status |
+| `_update_parent_children_md` | Rebuilds children.md table from get_children() results |
 | `resume_running_children` | Skips running children on startup (no re-processing) |
-| Child cron promotion | `scheduled` → `ready` when cron fires |
-| Child in `done` parent | `get_children` still finds children of done parents |
+| Child cron promotion | `scheduled` → `ready` when cron fires, children.md updated |
 | `note_path` uniqueness validation | Detects duplicate note_paths within a parent's children |
+| `process_child` (note_path conflict) | Child skipped, status set to needs-review |
 | `process_child` (abort during run) | Loop kills harness, leaves status as abort |
 
 ### 8.2 Prompt Tests
@@ -469,23 +507,25 @@ Oliver: Yes, create it. Also make it run daily instead of weekly.
 2. `_parse_child_runs_md()` — parse unified format for child path, calls `_parse_config_block()` + extracts `research_context`
 3. `_get_child_status()` — thin config read
 4. `_get_parent_id()` — thin config read
-5. `get_children()` — uses `_parse_child_runs_md()`, skips children with missing/None `parent:` key (opt-in discovery)
-6. `_update_child_status()` — one-line replacement in Config block
-7. `_append_research_run_for_child()` — **refactor** existing `_append_research_run()` to accept a `runs_path: Path` parameter (currently hardcoded to `self.work_dir / item_id / "RUNS.md"`), enables reuse for children
-8. `process_child()` — process child as research item with PARENT_ID/PARENT_DIR vars
-9. **`_validate_note_path_uniqueness(parent_id)`** — scans children RUNS.md files for duplicate note_paths, prevents conflicts
-10. Main loop extension: child processing step after top-level items
-11. `resume_running_children()` — startup: skips running children (no re-processing) to avoid partial state issues
+5. `_get_all_item_ids()` — filesystem scan of all item folders under work_dir (including done items), returns list of item IDs
+6. `get_children()` — uses `_parse_child_runs_md()`, skips children with missing/None `parent:` key (opt-in discovery)
+7. `_update_child_status()` — one-line replacement in Config block
+8. `_append_research_run()` — **refactor** existing method to accept optional `runs_path: Path` parameter (defaults to top-level path), enables reuse for children without duplicating append logic
+9. `_update_parent_children_md(parent_id)` — rebuilds children.md table from `get_children()` results; called by both loop (status transitions) and parent agent (lifecycle changes)
+10. `process_child()` — process child as research item with PARENT_ID/PARENT_DIR vars
+11. **`_validate_note_path_uniqueness(parent_id)`** — scans children RUNS.md files for duplicate note_paths, returns conflicts
+12. Main loop extension: child processing step after top-level items, calls `_update_parent_children_md()` after cron promotions and after `process_child()` completions
+13. `resume_running_children()` — startup: skips running children (no re-processing) to avoid partial state issues
 
 ### Phase 2: Prompt Changes
 
-10. LOOP-PROMPT.md — add "Managing Child Agents" section
-11. RESEARCH-PROMPT.md — add "Child Agent Awareness" section
+14. LOOP-PROMPT.md — add "Managing Child Agents" section
+15. RESEARCH-PROMPT.md — add "Child Agent Awareness" section
 
 ### Phase 3: Tests
 
-12. Unit tests for child discovery, processing, lifecycle
-13. Integration test: create child → loop processes → parent reads result
+16. Unit tests for child discovery, processing, lifecycle
+17. Integration test: create child → loop processes → parent reads result
 
 ## 10. Design Decisions Summary
 
@@ -502,7 +542,7 @@ Oliver: Yes, create it. Also make it run daily instead of weekly.
 | Hierarchy metadata | Config keys (`parent`, `status`) | Same mechanism as all other RUNS.md fields |
 | Directory name | `children/` (not `agents/`) | Avoids confusion with harness agent terminology (`.claude/agents/`, `.opencode/agents/`) |
 | Orphan detection | Opt-in: children without `parent:` key are invisible | Prevents noise from orphaned items appearing under every parent scan |
-| `note_path` conflicts | Enforced at loop level — unique per parent | Prevents race conditions when two children write to same file in same iteration |
+| `note_path` conflicts | Enforced at process time — unique per parent, validated before dispatch | Prevents race conditions when two children write to same file in same iteration; conflicts set child to `needs-review` |
 | `resume_running_children` | Skips running children at startup | Partial agent state is unsafe to recover; parent proposes re-run on next iteration |
 | Max children | Prompt-enforced limit (agent self-limiting) | Hard loop limit can be added later if needed |
 
@@ -538,7 +578,7 @@ This section documents the design review findings and how they were addressed in
 
 **Problem:** After successful run with no schedule, status goes to `ready`. Since the loop processes children in the same iteration after the parent, a no-schedule child would be re-discovered and re-processed every iteration indefinitely.
 
-**Fix:** Changed to `done` after success with no schedule. Parent must explicitly re-promote to `ready` to re-run. This matches the safety model of top-level research items.
+**Fix:** Changed to `done` after success with no schedule. Parent must explicitly re-promote to `ready` to re-run. This matches the safety model of top-level research items. Propagated to Section 4.2 (`process_child` completion logic) and Section 3 (state machine).
 
 ### 12.4 Fixed Orphan Detection (Opt-In)
 
@@ -562,7 +602,7 @@ This section documents the design review findings and how they were addressed in
 
 **Problem:** Two children writing to the same `note_path` (last write wins) was acknowledged but not prevented. If the loop processes children sequentially in the same iteration, both could write to the same file.
 
-**Fix:** Added `_validate_note_path_uniqueness()` to loop infrastructure. Enforced at child creation time — parent proposes unique paths, loop validates.
+**Fix:** Added `_validate_note_path_uniqueness()` to loop infrastructure. Enforced at process time — before dispatching a child, the loop scans all siblings' RUNS.md files for conflicts. Conflicting children are skipped (status → `needs-review`) and the parent agent is notified to resolve the conflict on the next iteration.
 
 ### 12.8 Fixed RUNS.md Schema Mismatch
 
