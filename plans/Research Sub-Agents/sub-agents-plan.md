@@ -43,19 +43,21 @@ Enable work items to spawn and manage child research agents (sub-agents) through
 
 ### Child RUNS.md Format
 
-Same format as top-level research RUNS.md, with two metadata lines at the top:
+Unified with top-level research RUNS.md — same Config block, same `## Research Context` block, same Run History table. Two additional config keys for hierarchy:
 
 ```markdown
-# Child Status: ready
-# Parent: KL-MM2H
-
 ## Config
+type: research
+parent: KL-MM2H
+status: ready
 topic: Neighborhood walkability analysis
 note_path: ../context/area-walkability.md
 sources:
-  - https://www.walkscore.com/score/Kuala-Lumpur
-research_context:
-  Evaluate walkability for top 5 KL neighborhoods
+  https://www.walkscore.com/score/Kuala-Lumpur
+schedule: 0 */6 * * *
+
+## Research Context
+Evaluate walkability for top 5 KL neighborhoods.
 
 ## Run History
 
@@ -64,9 +66,11 @@ research_context:
 ```
 
 Key points:
-- `# Child Status` — loop reads this for scheduling/dispatch decisions
-- `# Parent` — loop reads this to know where the child lives (for orphan detection)
+- `type: research` — loop identifies this as a research item (same as top-level)
+- `parent: {ITEM_ID}` — loop reads this for orphan detection
+- `status: {status}` — loop reads this for scheduling/dispatch decisions; defaults to `ready` if missing
 - `note_path` — relative to child's cwd (`agents/{name}/`), so `../context/` resolves to parent's `context/`
+- `## Research Context` — same format as top-level; injected verbatim into agent prompt
 - No `context/` folder under the child — parent's shared context is the only output target
 - Run history table uses same format as top-level RUNS.md
 
@@ -90,7 +94,7 @@ This file is analogous to WORK.md in function — it's the parent agent's operat
 
 ## 3. Status System
 
-### Child statuses (in `# Child Status` line):
+### Child statuses (in `status:` config key of RUNS.md):
 
 | Status | Meaning |
 |---|---|
@@ -127,54 +131,51 @@ All changes are additive — no existing behavior is modified.
 
 ### 4.1 New Methods
 
-#### `_get_child_status(runs_file: Path) -> str`
+#### `_parse_child_runs_md(child_path: Path) -> dict`
 
-Reads the `# Child Status:` line from a child RUNS.md. Returns the status string.
+Parses a child's RUNS.md using the same logic as top-level:
+- Calls `_parse_config_block(text)` on the full file content
+- Extracts `## Research Context` block via regex (same as top-level)
+- Returns config dict with all standard keys plus `research_context`
+- `parent` and `status` keys come from the Config block (defaults: `status=ready` if missing)
 
-#### `_get_parent_id(runs_file: Path) -> str | None`
+#### `_get_child_status(child_config: dict) -> str`
 
-Reads the `# Parent:` line from a child RUNS.md. Returns parent item ID.
+`child_config.get('status', 'ready')` — reads status from config dict.
+
+#### `_get_parent_id(child_config: dict) -> str | None`
+
+`child_config.get('parent')` — reads parent ID from config dict.
 
 #### `get_children(parent_id: str) -> list[tuple[str, str, dict]]`
 
 Scans `{work_dir}/{parent_id}/agents/*/RUNS.md`. For each found file:
-- Returns `(child_name, status, config)` where `config` is the parsed dict from `_parse_config_block()`
-- If RUNS.md has no `# Child Status:` line, defaults to `ready`
-- If `# Parent:` doesn't match `parent_id`, skips (orphan detection)
+- Calls `_parse_child_runs_md(child_path)` to get config dict
+- If `config.get('parent') != parent_id`, skips (orphan detection)
+- Returns `(child_name, status, config)` where `status = _get_child_status(config)`
 - Returns empty list if no children found
 
-#### `_parse_runs_md_for_child(parent_id: str, child_name: str) -> dict`
+#### `_update_child_status(child_path: Path, status: str) -> None`
 
-Same as `_parse_runs_md()` but for child path:
-- Reads `{work_dir}/{parent_id}/agents/{child_name}/RUNS.md`
-- Returns same config dict format as top-level `_parse_runs_md()`
-- Includes `research_context` key (from existing parsing logic)
+Parses child RUNS.md text, replaces the `status:` line in the Config block with the new value, writes file back. Same pattern as existing status update logic.
 
 #### `process_child(parent_id: str, child_name: str) -> None`
 
 Processes a child as a research item:
-- Reads child config (topic, sources, note_path, schedule)
+- Calls `_parse_child_runs_md()` to get config
 - Generates run ID
-- Updates child `# Child Status:` to `running`
+- Calls `_update_child_status()` to set status to `running`
 - Updates `children.md` to reflect running state
 - Processes exactly like `process_local()` in research mode, with:
   - `PARENT_ID` and `PARENT_DIR` env vars passed in prompt
   - `ITEM_DIR` points to child's folder (`agents/{child_name}/`)
 - On completion:
-  - Updates child `# Child Status:` line
-  - Appends run row to child's RUNS.md history
+  - Calls `_update_child_status()` to set final status
+  - Appends run row to child's RUNS.md history (reuse existing `_append_research_run()` with child path)
   - Updates `children.md`
   - If success + schedule → `scheduled`
   - If success + no schedule → `ready`
   - If failure → `needs-review`
-
-#### `_append_research_run_for_child(parent_id: str, child_name: str, run_id: str, summary: str) -> None`
-
-Appends a new row to child's RUNS.md run history table (same logic as `_append_research_run()` but for child path).
-
-#### `_update_child_status(parent_id: str, child_name: str, status: str) -> None`
-
-Updates the `# Child Status:` line in child RUNS.md. Uses regex to find and replace the line.
 
 #### `resume_running_children() -> None`
 
@@ -190,7 +191,7 @@ for parent_id in self._get_all_item_ids():       # includes done items
     for child_name, child_status, child_config in self.get_children(parent_id):
         if child_status == 'scheduled' and child_config.get('schedule'):
             if self._cron_should_run(child_config['schedule']):
-                self._update_child_status(parent_id, child_name, 'ready')
+                self._update_child_status(child_path, 'ready')
         if child_status == 'ready':
             self.process_child(parent_id, child_name)
 ```
@@ -233,16 +234,18 @@ When the parent identifies a research gap, it proposes a new child:
 
 **RUNS.md to create:**
 ```markdown
-# Child Status: ready
-# Parent: {ITEM_ID}
-
 ## Config
+type: research
+parent: {ITEM_ID}
+status: ready
 topic: Neighborhood walkability analysis
 note_path: ../context/area-walkability.md
 sources:
-  - https://www.walkscore.com/score/Kuala-Lumpur
-research_context:
-  Evaluate walkability for top 5 KL neighborhoods
+  https://www.walkscore.com/score/Kuala-Lumpur
+schedule: 0 */6 * * *
+
+## Research Context
+Evaluate walkability for top 5 KL neighborhoods.
 ```
 
 **Questions:** Should I create this child agent?
@@ -404,13 +407,13 @@ Oliver: Yes, create it. Also make it run daily instead of weekly.
 
 | Case | Handling |
 |---|---|
-| Parent item deleted | Children become orphans. Loop skips them (parent_id mismatch). Parent agent can clean up via proposal. |
-| Child RUNS.md has no `# Child Status:` line | Defaults to `ready` |
-| Child RUNS.md has no `# Parent:` line | Included in all parents' scans (parent_id = None). Parent agent can detect and fix. |
+| Parent item deleted | Children become orphans. Loop skips them (`parent` key mismatch). Parent agent can clean up via proposal. |
+| Child RUNS.md has no `status:` config key | Defaults to `ready` |
+| Child RUNS.md has no `parent:` config key | Included in all parents' scans (`parent` = None). Parent agent can detect and fix via proposal. |
 | Multiple parents writing to same `context/` file | Shouldn't happen if parent manages it. If it does, last write wins (standard file behavior). |
 | Child agent fails | Status set to `needs-review`. Parent sees this in next iteration and can propose re-run. |
 | Cron fires while child is `running` | Skipped (only promotes `scheduled` → `ready`). Child completes first. |
-| User directly edits child's RUNS.md | Loop reads user's edit. If `# Child Status:` changed, respects it. |
+| User directly edits child's RUNS.md | Loop reads user's edit. If `status:` changed, respects it. |
 
 ## 8. Testing Strategy
 
@@ -418,8 +421,9 @@ Oliver: Yes, create it. Also make it run daily instead of weekly.
 
 | Test | What |
 |---|---|
-| `_get_child_status` | Reads `# Child Status:` line from RUNS.md |
-| `_get_parent_id` | Reads `# Parent:` line from RUNS.md |
+| `_parse_child_runs_md` | Parses unified format, extracts config + research_context |
+| `_get_child_status` | Reads `status:` from config dict, defaults to `ready` |
+| `_get_parent_id` | Reads `parent:` from config dict |
 | `get_children` (no children) | Empty parent folder returns [] |
 | `get_children` (with children) | Returns list of (name, status, config) tuples |
 | `get_children` (mixed statuses) | Returns all children regardless of status |
@@ -427,8 +431,7 @@ Oliver: Yes, create it. Also make it run daily instead of weekly.
 | `process_child` (success + schedule) | Status transitions: ready → running → scheduled |
 | `process_child` (success + no schedule) | Status transitions: ready → running → ready |
 | `process_child` (failure) | Status transitions: ready → running → needs-review |
-| `_update_child_status` | Correctly updates `# Child Status:` line |
-| `_append_research_run_for_child` | Appends row to child's RUNS.md history |
+| `_update_child_status` | Correctly updates `status:` line in Config block |
 | `resume_running_children` | Resumes running children on startup |
 | Child cron promotion | `scheduled` → `ready` when cron fires |
 | Child in `done` parent | `get_children` still finds children of done parents |
@@ -445,37 +448,39 @@ Oliver: Yes, create it. Also make it run daily instead of weekly.
 
 ### Phase 1: Loop Infrastructure (run-loop.py)
 
-1. `_get_child_status()` — read child status from RUNS.md
-2. `_get_parent_id()` — read parent ID from RUNS.md
-3. `get_children()` — discover children for a parent
-4. `_update_child_status()` — update child status line
-5. `_append_research_run_for_child()` — append to child's run history
-6. `process_child()` — process child as research item with PARENT_ID/PARENT_DIR vars
-7. Main loop extension: child processing step after top-level items
-8. `resume_running_children()` — startup recovery for running children
+1. `_parse_child_runs_md()` — parse unified format for child path, calls `_parse_config_block()` + extracts `research_context`
+2. `_get_child_status()` — thin config read
+3. `_get_parent_id()` — thin config read
+4. `get_children()` — uses `_parse_child_runs_md()`, orphan detection via config
+5. `_update_child_status()` — one-line replacement in Config block
+6. `_append_research_run_for_child()` — reuse existing `_append_research_run()` with child path
+7. `process_child()` — process child as research item with PARENT_ID/PARENT_DIR vars
+8. Main loop extension: child processing step after top-level items
+9. `resume_running_children()` — startup recovery for running children
 
 ### Phase 2: Prompt Changes
 
-9. LOOP-PROMPT.md — add "Managing Child Agents" section
-10. RESEARCH-PROMPT.md — add "Child Agent Awareness" section
+10. LOOP-PROMPT.md — add "Managing Child Agents" section
+11. RESEARCH-PROMPT.md — add "Child Agent Awareness" section
 
 ### Phase 3: Tests
 
-11. Unit tests for child discovery, processing, lifecycle
-12. Integration test: create child → loop processes → parent reads result
+12. Unit tests for child discovery, processing, lifecycle
+13. Integration test: create child → loop processes → parent reads result
 
 ## 10. Design Decisions Summary
 
 | Decision | Choice | Rationale |
 |---|---|---|
 | Nesting depth | 1 level only | Simplest to implement, clearest hierarchy |
-| Child RUNS.md name | RUNS.md (same as top-level) | Reuses all existing parsing logic |
+| Child RUNS.md format | Unified with top-level | One parser, one format, zero new file conventions |
 | Output context | Parent's context only | No duplication, single source of truth |
 | children.md | Kept | Parent's operational dashboard, analogous to WORK.md |
 | Child CONVERSATION.md | Kept | Transparency — user can see parent's management actions per child |
 | Remote dispatch | No for v1 | Adds complexity, can be added later |
 | Cron for children | Yes (same as top-level) | Consistent behavior, children can be recurring |
 | Status after success (no schedule) | `ready` (not `done`) | Parent decides whether to re-run or mark done |
+| Hierarchy metadata | Config keys (`parent`, `status`) | Same mechanism as all other RUNS.md fields |
 
 ## 11. Open Questions
 
@@ -485,4 +490,4 @@ Oliver: Yes, create it. Also make it run daily instead of weekly.
 
 3. **Should there be a limit on child agent count?** e.g., max 10 children per parent. This prevents runaway proliferation. Could be enforced by the prompt (agent self-limiting) or by the loop (hard limit).
 
-4. **Should the loop enforce a parent-child hierarchy invariant?** e.g., reject child RUNS.md where `# Parent:` doesn't match the folder's parent. Currently the loop just checks for a match and skips mismatches.
+4. **Should the loop enforce a parent-child hierarchy invariant?** e.g., reject child RUNS.md where `parent:` doesn't match the folder's parent. Currently the loop just checks for a match and skips mismatches.
