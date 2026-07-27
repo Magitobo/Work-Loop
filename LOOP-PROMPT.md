@@ -122,3 +122,117 @@ No Critic Review section. No Code Review section. The user sees only the clean, 
 Find the row with {ITEM_ID} in `{WORK_LOOP_DIR}/WORK.md`. Set Status to "needs-review".
 If the Title cell is plain text (not a markdown link), derive a concise title (3–6 words) and
 replace with `[concise title]({ITEM_ID}/CONVERSATION.md)`.
+
+## Step 6 — Managing Child Agents
+
+You can manage child research agents. Child agents are sub-agents that run focused research
+cycles on your behalf. They write results to shared `context/` files and `children/*/runs/*/research.md`.
+
+### Reading Child Agent Status
+
+Read `{ITEM_DIR}/WORK-CHILDREN.md` to see your current child agents and their statuses:
+- `ready` — next run pending
+- `scheduled` — waiting for cron
+- `running` — currently executing
+- `success` — last run completed
+- `done` — one-off complete (you can re-promote to `ready` to re-run)
+- `needs-review` — last run failed or produced issues
+- `paused` — manually paused
+- `abort` — user cancelled
+
+Child run summaries are in each child's `children/{name}/RUNS.md` run history table.
+
+### Creating a Child Agent (Requires Your Approval)
+
+When you identify a research gap, propose a new child agent:
+
+```
+### Proposals
+
+#### Create child agent: `{name}` — {topic}
+
+**RUNS.md to create at `children/{name}/RUNS.md`:**
+\`\`\`markdown
+## Config
+type: research
+parent: {ITEM_ID}
+topic: {topic}
+note_path: ../context/{output-file}.md
+sources:
+  {url1}
+  {url2}
+schedule: {cron}
+
+## Research Context
+{research context instructions}
+\`\`\`
+
+**WORK-CHILDREN.md row to add:**
+| {name} | [{topic}](children/{name}/RUNS.md) | ready |  |  |  |
+
+**Questions:** Should I create this child agent?
+```
+
+After your approval, create the child folder, RUNS.md, and add the row to WORK-CHILDREN.md.
+
+### Updating a Child Agent (Requires Your Approval)
+
+To change a child's sources, topic, note_path, or schedule type:
+
+```
+### Proposals
+
+#### Update child agent: `{name}` — {what to change}
+
+Current: {current value}
+Proposed: {new value}
+
+**Questions:** Should I update this child agent?
+```
+
+### Deleting a Child Agent (Requires Your Approval)
+
+```
+### Proposals
+
+#### Delete child agent: `{name}` — {reason}
+
+**Questions:** Should I delete this child agent?
+```
+
+After approval, remove the child folder and remove its row from WORK-CHILDREN.md.
+
+### Pausing/Resuming Child Agents (Direct — No Approval Needed)
+
+You can directly update child status in WORK-CHILDREN.md for low-risk actions:
+- `paused` → `ready`: resume a paused child
+- `done` → `ready`: re-run a completed one-off child
+- `ready` → `paused`: pause a child
+
+Log these actions in CONVERSATION.md:
+```
+### Actions
+
+- Paused child agent `buildings` (no current relevance)
+- Resumed child agent `rules` (daily schedule will start next cycle)
+```
+
+### Reporting Child Results
+
+Synthesize child run results in your CONVERSATION.md findings:
+
+```
+### Child Agent Updates
+
+**areas** (success): Updated area-walkability.md with 3 new neighborhoods.
+**rules** (needs-review): MM2H rules updated but source failed — needs verification.
+```
+
+### Important Rules
+
+- Child agents write to parent's `context/` via relative `note_path` (e.g. `../context/file.md`)
+- Each child must have a unique `note_path` — the loop enforces this
+- Children have their own budget from WORK-CHILDREN.md Budget column (default: global)
+- You create/update/delete children through proposals. You can pause/resume directly.
+- Never write to WORK.md or WORK-CHILDREN.md's Status column — the loop handles that
+- Backlinks: child-generated files should link to `[[{ITEM_ID}/CONVERSATION]]`

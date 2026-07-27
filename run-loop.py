@@ -360,6 +360,14 @@ RUNS_COL_STATUS = 3
 RUNS_COL_LAST_UPDATED = 4
 RUNS_COL_LOG = 5
 
+# WORK-CHILDREN.md column indices
+CH_ID = 1
+CH_TITLE = 2
+CH_STATUS = 3
+CH_LAST_UPDATED = 4
+CH_BUDGET = 5
+CH_LOG = 6
+
 # Polling constants
 POLL_INTERVAL_S = 5
 POLL_CYCLES_PER_MIN = 60 // POLL_INTERVAL_S  # = 12
@@ -405,6 +413,7 @@ class WorkLoop:
         self.prompt_file = self.script_dir / "LOOP-PROMPT.md"
         self.impl_prompt_file = self.script_dir / "IMPL-PROMPT.md"
         self.resolve_prompt_file = self.script_dir / "RESOLVE-PROMPT.md"
+        self.child_research_prompt_file = self.script_dir / "CHILD-RESEARCH-PROMPT.md"
 
     # -------------------------------------------------------------------------
     # WORK.md I/O
@@ -1133,6 +1142,7 @@ class WorkLoop:
             'heartbeat_file': '', 'timeout': DEFAULT_TIMEOUT_MIN,
             'aggregation_script': '', 'analysis_prompt': '',
             'type': '', 'topic': '', 'note_path': '', 'sources': [],
+            'parent': '',
         }
         m = re.search(r'^## Config\s*\n(.*?)(?=^##|\Z)', text, re.MULTILINE | re.DOTALL)
         if not m:
@@ -1191,6 +1201,8 @@ class WorkLoop:
                 config['topic'] = val
             elif key_n == 'note_path':
                 config['note_path'] = val
+            elif key_n == 'parent':
+                config['parent'] = val
         return config
 
     def _parse_runs_md(self, item_id: str) -> dict:
@@ -1205,6 +1217,8 @@ class WorkLoop:
         config['research_context'] = m.group(1).strip() if m else ''
         return config
 
+    _parse_runs_md_config = _parse_runs_md  # alias for script item processing
+
     def _empty_config(self) -> dict:
         """Return a default/empty config dict."""
         return {
@@ -1213,7 +1227,7 @@ class WorkLoop:
             'heartbeat_file': '', 'timeout': DEFAULT_TIMEOUT_MIN,
             'aggregation_script': '', 'analysis_prompt': '',
             'type': '', 'topic': '', 'note_path': '', 'sources': [],
-            'research_context': '',
+            'parent': '', 'research_context': '',
         }
 
     def _cron_should_run(self, cron_str: str, now: datetime) -> bool:
@@ -1251,11 +1265,11 @@ class WorkLoop:
             _matches(dow_s, cron_dow)
         )
 
-    def _generate_run_id(self, item_id: str) -> str:
+    def _generate_run_id(self, item_id: str, runs_path: Path | None = None) -> str:
         """Generate YYYYMMDD-NNN run ID by scanning existing RUNS.md rows."""
+        runs_file = runs_path if runs_path is not None else self.work_dir / item_id / "RUNS.md"
         today = datetime.now().strftime('%Y%m%d')
         max_n = 0
-        runs_file = self.work_dir / item_id / "RUNS.md"
         if runs_file.exists():
             for line in runs_file.read_text().splitlines():
                 if line.startswith('|'):
@@ -1321,12 +1335,13 @@ class WorkLoop:
         run_dir.mkdir(parents=True, exist_ok=True)
         return run_dir
 
-    def _append_research_run(self, item_id: str, run_id: str, summary: str) -> None:
+    def _append_research_run(self, item_id: str, run_id: str, summary: str, runs_path: Path | None = None) -> None:
         """Append a new row to RUNS.md run history table for research items."""
-        runs_file = self.work_dir / item_id / "RUNS.md"
+        runs_file = runs_path if runs_path is not None else self.work_dir / item_id / "RUNS.md"
         today = datetime.now().strftime('%Y-%m-%d')
+        log_link = f"[Log](runs/{run_id}/)"
         summary_link = f"[{summary}](runs/{run_id}/)"
-        row = f"| {run_id} | {summary_link} | running | {today} |\n"
+        row = f"| {run_id} | {summary_link} | running | {today} | {log_link} |\n"
         text = runs_file.read_text() if runs_file.exists() else ""
         lines = text.splitlines(keepends=True)
         table_sep_idx = -1
@@ -1339,7 +1354,7 @@ class WorkLoop:
             elif table_sep_idx >= 0 and line.startswith('|'):
                 last_data_idx = i
         if table_sep_idx < 0:
-            header = "\n| ID | Summary | Status | Last Updated |\n|---|---|---|---|\n"
+            header = "\n| ID | Summary | Status | Last Updated | Log |\n|---|---|---|---|---|\n"
             text += header + row
             runs_file.write_text(text)
         else:
@@ -1347,9 +1362,9 @@ class WorkLoop:
             lines.insert(insert_at, row)
             runs_file.write_text("".join(lines))
 
-    def _update_runs_md_row_status(self, item_id: str, run_id: str, status: str) -> None:
+    def _update_runs_md_row_status(self, item_id: str, run_id: str, status: str, runs_path: Path | None = None) -> None:
         """Update Status and Last Updated for a given run_id in RUNS.md."""
-        runs_file = self.work_dir / item_id / "RUNS.md"
+        runs_file = runs_path if runs_path is not None else self.work_dir / item_id / "RUNS.md"
         if not runs_file.exists():
             return
         today = datetime.now().strftime('%Y-%m-%d')
@@ -1365,9 +1380,9 @@ class WorkLoop:
             new_lines.append(line)
         runs_file.write_text("".join(new_lines))
 
-    def _find_latest_runs_md_run(self, item_id: str, status: str | None = None) -> str | None:
+    def _find_latest_runs_md_run(self, item_id: str, status: str | None = None, runs_path: Path | None = None) -> str | None:
         """Return the latest run_id with given status (None = any)."""
-        runs_file = self.work_dir / item_id / "RUNS.md"
+        runs_file = runs_path if runs_path is not None else self.work_dir / item_id / "RUNS.md"
         if not runs_file.exists():
             return None
         latest = None
@@ -1384,6 +1399,326 @@ class WorkLoop:
             if status is None or row_status == status:
                 latest = run_id
         return latest
+
+    # -------------------------------------------------------------------------
+    # Child agent support
+    # -------------------------------------------------------------------------
+
+    def _parse_child_runs_md(self, child_path: Path) -> dict:
+        """Parse a child's RUNS.md from an arbitrary path."""
+        if not child_path.exists():
+            return self._empty_config()
+        text = child_path.read_text()
+        config = self._parse_config_block(text)
+        m = re.search(r'^## Research Context\s*\n(.*?)(?=^##|\Z)', text, re.MULTILINE | re.DOTALL)
+        config['research_context'] = m.group(1).strip() if m else ''
+        return config
+
+    def _get_all_item_ids(self) -> list[str]:
+        """Return all item IDs in work_dir, including done items (filesystem scan)."""
+        items = []
+        for entry in sorted(self.work_dir.iterdir()):
+            if entry.is_dir():
+                if (entry / "RUNS.md").exists() or (entry / "CONVERSATION.md").exists():
+                    items.append(entry.name)
+        return items
+
+    def _get_child_status(self, work_children_path: Path, child_name: str) -> str:
+        """Read Status column for child_name from WORK-CHILDREN.md. Defaults to 'ready'."""
+        if not work_children_path.exists():
+            return 'ready'
+        for line in work_children_path.read_text().splitlines():
+            stripped = line.rstrip('\n')
+            if not stripped.startswith('|'):
+                continue
+            cols = stripped.split('|')
+            if len(cols) < CH_STATUS + 1:
+                continue
+            if cols[CH_ID].strip() == child_name:
+                return cols[CH_STATUS].strip()
+        return 'ready'
+
+    @staticmethod
+    def _get_parent_id(child_config: dict) -> str | None:
+        """Read parent ID from child config dict."""
+        return child_config.get('parent') or None
+
+    def get_children(self, parent_id: str) -> list[tuple[str, str, dict]]:
+        """Two-phase child discovery: WORK-CHILDREN.md for names/statuses, RUNS.md for config + orphan check."""
+        work_children_path = self.work_dir / parent_id / "WORK-CHILDREN.md"
+        if not work_children_path.exists():
+            return []
+        children = []
+        for line in work_children_path.read_text().splitlines():
+            stripped = line.rstrip('\n')
+            if not stripped.startswith('|'):
+                continue
+            cols = stripped.split('|')
+            if len(cols) < CH_STATUS + 1:
+                continue
+            child_name = cols[CH_ID].strip()
+            if not child_name:
+                continue
+            child_runs_path = self.work_dir / parent_id / "children" / child_name / "RUNS.md"
+            if not child_runs_path.exists():
+                continue
+            config = self._parse_child_runs_md(child_runs_path)
+            parent = self._get_parent_id(config)
+            if not parent or parent != parent_id:
+                continue
+            status = self._get_child_status(work_children_path, child_name)
+            children.append((child_name, status, config))
+        return children
+
+    def _update_child_status(self, parent_id: str, child_name: str, status: str) -> None:
+        """Update Status column for child_name in parent's WORK-CHILDREN.md."""
+        work_children_path = self.work_dir / parent_id / "WORK-CHILDREN.md"
+        if not work_children_path.exists():
+            return
+        today = datetime.now().strftime('%Y-%m-%d')
+        new_lines = []
+        for line in work_children_path.read_text().splitlines(keepends=True):
+            stripped = line.rstrip('\n')
+            if not stripped.startswith('|'):
+                new_lines.append(line)
+                continue
+            cols = stripped.split('|')
+            if len(cols) < CH_STATUS + 1:
+                new_lines.append(line)
+                continue
+            if cols[CH_ID].strip() == child_name:
+                cols[CH_STATUS] = f" {status} "
+                if len(cols) > CH_LAST_UPDATED:
+                    cols[CH_LAST_UPDATED] = f" {today} "
+                line = '|'.join(cols) + '\n'
+            new_lines.append(line)
+        work_children_path.write_text(''.join(new_lines))
+
+    def _update_child_budget(self, parent_id: str, child_name: str, budget: str) -> None:
+        """Update Budget column for child_name in parent's WORK-CHILDREN.md."""
+        work_children_path = self.work_dir / parent_id / "WORK-CHILDREN.md"
+        if not work_children_path.exists():
+            return
+        new_lines = []
+        for line in work_children_path.read_text().splitlines(keepends=True):
+            stripped = line.rstrip('\n')
+            if not stripped.startswith('|'):
+                new_lines.append(line)
+                continue
+            cols = stripped.split('|')
+            if len(cols) < CH_BUDGET + 1:
+                new_lines.append(line)
+                continue
+            if cols[CH_ID].strip() == child_name:
+                cols[CH_BUDGET] = f" {budget} "
+                line = '|'.join(cols) + '\n'
+            new_lines.append(line)
+        work_children_path.write_text(''.join(new_lines))
+
+    def _update_child_log(self, parent_id: str, child_name: str, log: str) -> None:
+        """Update Log column for child_name in parent's WORK-CHILDREN.md."""
+        work_children_path = self.work_dir / parent_id / "WORK-CHILDREN.md"
+        if not work_children_path.exists():
+            return
+        new_lines = []
+        for line in work_children_path.read_text().splitlines(keepends=True):
+            stripped = line.rstrip('\n')
+            if not stripped.startswith('|'):
+                new_lines.append(line)
+                continue
+            cols = stripped.split('|')
+            if len(cols) < CH_LOG + 1:
+                new_lines.append(line)
+                continue
+            if cols[CH_ID].strip() == child_name:
+                cols[CH_LOG] = f" {log} "
+                line = '|'.join(cols) + '\n'
+            new_lines.append(line)
+        work_children_path.write_text(''.join(new_lines))
+
+    def _get_child_budget(self, parent_id: str, child_name: str) -> float:
+        """Return budget for a child from WORK-CHILDREN.md Budget column, falling back to max_budget."""
+        work_children_path = self.work_dir / parent_id / "WORK-CHILDREN.md"
+        if not work_children_path.exists():
+            return self.max_budget
+        for line in work_children_path.read_text().splitlines():
+            stripped = line.rstrip('\n')
+            if not stripped.startswith('|'):
+                continue
+            cols = stripped.split('|')
+            if len(cols) < CH_BUDGET + 1:
+                continue
+            if cols[CH_ID].strip() == child_name:
+                raw = cols[CH_BUDGET].strip()
+                m = re.match(r'\$\s*([\d.]+)', raw)
+                if m:
+                    try:
+                        return float(m.group(1))
+                    except ValueError:
+                        pass
+                break
+        return self.max_budget
+
+    def _validate_note_path_uniqueness(self, parent_id: str, child_name: str) -> tuple[bool, str | None]:
+        """Check for duplicate note_path among siblings. Returns (is_unique, conflicting_child_name)."""
+        children = self.get_children(parent_id)
+        target_note = None
+        for cname, _, cfg in children:
+            if cname == child_name:
+                target_note = cfg.get('note_path', '')
+        if not target_note:
+            return True, None
+        for cname, _, cfg in children:
+            if cname == child_name:
+                continue
+            if cfg.get('note_path', '') == target_note:
+                return False, cname
+        return True, None
+
+    def _update_parent_work_children(self, parent_id: str) -> None:
+        """Rebuild non-status columns of WORK-CHILDREN.md from children's RUNS.md data."""
+        children = self.get_children(parent_id)
+        if not children:
+            return
+        work_children_path = self.work_dir / parent_id / "WORK-CHILDREN.md"
+        if not work_children_path.exists():
+            return
+        existing_text = work_children_path.read_text()
+        lines = existing_text.splitlines(keepends=True)
+        new_lines = []
+        in_table = False
+        for line in lines:
+            stripped = line.rstrip('\n')
+            if stripped.startswith('| --') or stripped.startswith('|--'):
+                in_table = True
+                new_lines.append(line)
+                continue
+            if in_table and stripped.startswith('|'):
+                cols = stripped.split('|')
+                if len(cols) < CH_ID + 1:
+                    new_lines.append(line)
+                    continue
+                cname = cols[CH_ID].strip()
+                found = False
+                for child_name, _, cfg in children:
+                    if child_name == cname:
+                        topic = cfg.get('topic', child_name)
+                        cols[CH_TITLE] = f" [{topic}](children/{child_name}/RUNS.md) "
+                        line = '|'.join(cols) + '\n'
+                        found = True
+                        break
+                if not found:
+                    continue
+                new_lines.append(line)
+                continue
+            if in_table and not stripped.startswith('|'):
+                in_table = False
+                new_lines.append(line)
+                continue
+            new_lines.append(line)
+        work_children_path.write_text(''.join(new_lines))
+
+    def process_child(self, parent_id: str, child_name: str) -> None:
+        """Process a child research agent. Does NOT touch top-level WORK.md."""
+        child_dir = self.work_dir / parent_id / "children" / child_name
+        runs_path = child_dir / "RUNS.md"
+        config = self._parse_child_runs_md(runs_path)
+        budget = self._get_child_budget(parent_id, child_name)
+        today = datetime.now().strftime('%Y-%m-%d')
+        ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+
+        is_unique, conflict = self._validate_note_path_uniqueness(parent_id, child_name)
+        if not is_unique:
+            self._update_child_status(parent_id, child_name, 'needs-review')
+            print(f"[{_ts()}] {parent_id}/{child_name}: note_path conflict with {conflict} — needs-review")
+            return
+
+        run_id = self._generate_run_id(child_name, runs_path=runs_path)
+        run_dir = child_dir / "runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        self._update_child_status(parent_id, child_name, 'running')
+
+        if not self.child_research_prompt_file.exists():
+            self._update_child_status(parent_id, child_name, 'needs-review')
+            print(f"[{_ts()}] {parent_id}/{child_name}: CHILD-RESEARCH-PROMPT.md not found — needs-review")
+            return
+
+        prompt_text = self.child_research_prompt_file.read_text()
+        sources = config.get('sources', [])
+        sources_str = '\n'.join(f'- {s.strip()}' for s in sources) if sources else '(none)'
+        context = config.get('research_context', '')
+        parent_dir = str(self.work_dir / parent_id)
+        item_dir = str(child_dir)
+        prompt = (
+            f"{prompt_text}\n\n"
+            f"topic: {config.get('topic', '')}\n"
+            f"note_path: {config.get('note_path', '')}\n"
+            f"sources:\n{sources_str}\n"
+            f"research_context:\n{context}\n"
+            f"run_id: {run_id}\n"
+            f"\nPARENT_ID: {parent_id}\n"
+            f"PARENT_DIR: {parent_dir}\n"
+            f"ITEM_ID: {child_name}\n"
+            f"WORK_LOOP_DIR: {self.work_dir}\n"
+            f"ITEM_DIR: {item_dir}"
+        )
+        cwd = str(self.work_dir)
+
+        log_file = self.log_dir / f"{ts}_{parent_id}_{child_name}.log"
+        log_link = f"[Log](.logs/{ts}_{parent_id}_{child_name}.debug)"
+        print(f"[{_ts()}] Processing child: {parent_id}/{child_name} (budget: ${budget}, run_id: {run_id})")
+
+        exit_code = self._run_harness(prompt, log_file, budget, cwd=cwd, item_id=f"{parent_id}/{child_name}")
+
+        # Check for abort
+        current_status = self._get_child_status(
+            self.work_dir / parent_id / "WORK-CHILDREN.md", child_name
+        )
+        self._update_child_log(parent_id, child_name, log_link)
+
+        if current_status == 'abort':
+            self._update_child_status(parent_id, child_name, 'abort')
+            print(f"[{_ts()}] {parent_id}/{child_name}: aborted by user")
+            return
+
+        if exit_code != 0:
+            failure = self._classify_failure(f"{parent_id}_{child_name}", ts)
+            if failure == "budget":
+                budget_label, cause = f"${budget} - EXCEEDED", "budget exceeded"
+            else:
+                budget_label, cause = f"${budget} - FAILED", "run failed"
+            self._update_child_status(parent_id, child_name, 'needs-review')
+            self._update_child_budget(parent_id, child_name, budget_label)
+            print(f"[{_ts()}] {parent_id}/{child_name}: {cause} — needs-review")
+        else:
+            self._update_child_budget(parent_id, child_name, f"${budget}")
+            summary = "Research complete"
+            research_file = run_dir / "research.md"
+            if research_file.exists():
+                rlines = research_file.read_text().split('\n')
+                if len(rlines) > 1:
+                    summary = rlines[1].strip('# -').strip()
+            self._append_research_run(child_name, run_id, summary, runs_path=runs_path)
+
+            if config.get('schedule'):
+                self._update_child_status(parent_id, child_name, 'scheduled')
+                print(f"[{_ts()}] {parent_id}/{child_name}: research complete — scheduled")
+            else:
+                self._update_child_status(parent_id, child_name, 'done')
+                print(f"[{_ts()}] {parent_id}/{child_name}: research complete — done")
+
+    def resume_running_children(self) -> None:
+        """On startup, find running children and handle orphan recovery."""
+        for parent_id in self._get_all_item_ids():
+            children = self.get_children(parent_id)
+            for child_name, child_status, _ in children:
+                if child_status == 'running':
+                    parent_status = self.get_col(parent_id, COL_STATUS)
+                    if parent_status == 'done':
+                        self._update_child_status(parent_id, child_name, 'needs-review')
+                        print(f"[{_ts()}] {parent_id}/{child_name}: orphan recovery — parent is done, set to needs-review")
+                    else:
+                        print(f"[{_ts()}] {parent_id}/{child_name}: stale running status — parent agent should handle")
 
     def _read_run_state(self, item_id: str, run_id: str) -> dict | None:
         state_file = self.work_dir / item_id / "runs" / run_id / "run_state.json"
@@ -1698,6 +2033,7 @@ class WorkLoop:
         print(f"[{_ts()}] Work loop started. Default budget: ${self.max_budget} (override per item via Budget column). Press Ctrl+C to stop.")
 
         self.resume_running_script_items()
+        self.resume_running_children()
 
         idle_shown = False
 
@@ -1712,9 +2048,26 @@ class WorkLoop:
             for item_id in self.get_scheduled_items():
                 self.update_col(item_id, COL_STATUS, 'ready')
 
+            # Promote scheduled children whose cron fires now
+            now = datetime.now()
+            for parent_id in self._get_all_item_ids():
+                children = self.get_children(parent_id)
+                for child_name, child_status, child_config in children:
+                    if child_status == 'scheduled' and child_config.get('schedule'):
+                        if self._cron_should_run(child_config['schedule'], now):
+                            self._update_child_status(parent_id, child_name, 'ready')
+
             ready = self.get_ready_items()
 
-            if not ready:
+            # Check if any children are ready (for idle detection)
+            def _any_children_ready():
+                for parent_id in self._get_all_item_ids():
+                    for _, status, _ in self.get_children(parent_id):
+                        if status == 'ready':
+                            return True
+                return False
+
+            if not ready and not _any_children_ready():
                 print(f"\r[{_ts()}] Work loop idle...   ", end="", flush=True)
                 idle_shown = True
                 time.sleep(5)
@@ -1754,6 +2107,25 @@ class WorkLoop:
                     self.process_local(item_id, budget)
 
                 print("---")
+
+            # Process children after top-level items
+            for parent_id in self._get_all_item_ids():
+                children = self.get_children(parent_id)
+                if not children:
+                    continue
+                processed_names = {c[0] for c in children}
+                for child_name, child_status, _ in children:
+                    if child_status == 'ready':
+                        self.process_child(parent_id, child_name)
+                # Re-scan for newly created children
+                new_children = self.get_children(parent_id)
+                newly_discovered = {c[0] for c in new_children} - processed_names
+                for nd_name in newly_discovered:
+                    nd_status = self._get_child_status(
+                        self.work_dir / parent_id / "WORK-CHILDREN.md", nd_name
+                    )
+                    if nd_status == 'ready':
+                        self.process_child(parent_id, nd_name)
 
             if once:
                 break
