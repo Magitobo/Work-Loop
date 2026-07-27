@@ -2866,6 +2866,7 @@ class TestGetAllItemIds(unittest.TestCase):
             (p / "ITEM-002").mkdir()
             (p / "ITEM-002" / "RUNS.md").write_text("test")
             (p / "ITEM-003").mkdir()
+            (p / "ITEM-003" / "RUNS.md").write_text("test")
             cfg = {"work_dir": p, "harness": {"type": "claude", "max_budget_usd": 10.00}}
             wl = WorkLoop(cfg)
             ids = wl._get_all_item_ids()
