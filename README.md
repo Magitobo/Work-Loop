@@ -2,7 +2,7 @@
 
 ## Overview
 
-Work-Loop is an automated harness that runs AI agents (Claude or OpenCode) on work items one at a time. Each item gets a fresh context, and items can run locally or be dispatched to remote hosts over SSH. The loop also supports **script items** — automated command dispatch to one or more machines with cron scheduling, multi-machine polling, and fan-in aggregation — and **research items** — automated web research that fetches sources, compares against existing notes, and writes updated notes with per-run summaries.
+Work-Loop is an automated harness that runs AI agents (Claude or OpenCode) on work items one at a time. Each item gets a fresh context, and items can run locally or be dispatched to remote hosts over SSH. The loop also supports **script items** — automated command dispatch to one or more machines with cron scheduling, multi-machine polling, and fan-in aggregation — **research items** — automated web research that fetches sources, compares against existing notes, and writes updated notes with per-run summaries — and **child research agents** — parent items can spawn and manage sub-agents via a propose/approve workflow for focused, parallel research.
 
 ## Quick Start
 
@@ -57,7 +57,12 @@ Work-Loop/                    ← scripts repo
     └── <item-id>/            ← one folder per item
         ├── CONVERSATION.md   ← thread between user and agent
         ├── background.md     ← (optional) internal context
-        └── context/          ← (optional) additional context files
+        ├── WORK-CHILDREN.md  ← (optional) child agent registry
+        ├── context/          ← (optional) shared research output
+        └── children/         ← (optional) child agent directories
+            └── {name}/      ← one folder per child agent
+                ├── RUNS.md ← child config + run history
+                └── runs/  ← per-run research summaries
 ```
 
 ## WORK.md Table
@@ -93,6 +98,95 @@ new → ready/analyze/implement/resolved → in-progress → needs-review
 | `needs-review` | Harness finished (or failed); human review needed |
 | `abort` | Set by human to cancel: skips un-started items; kills running harness |
 | `done` | Human marks complete; loop moves row to Done section |
+
+## Child Research Agents
+
+Parent items can spawn and manage child research agents — sub-agents that run focused research cycles and write results to the parent's shared `context/` directory. Children are managed through a **propose/approve** workflow: the parent agent proposes structural changes, the user approves, and the loop executes.
+
+### Registry: WORK-CHILDREN.md
+
+Child agents are tracked in `WORK-CHILDREN.md` within the parent item folder. The parent agent creates and maintains this file; the loop manages status transitions.
+
+```markdown
+| ID | Title | Status | Last Updated | Budget | Log |
+|---|---|---|---|---|---|
+| areas | [Walkability analysis](children/areas/RUNS.md) | ready | 2025-07-26 |  |  |
+| rules | [MM2H rules](children/rules/RUNS.md) | scheduled | 2025-07-25 |  |  |
+```
+
+| Column | Description |
+|---|---|
+| ID | Child folder name (e.g. `areas`, `rules`) |
+| Title | Markdown link to child's `RUNS.md` |
+| Status | Child status (see state machine below) |
+| Budget | Per-child budget override (e.g. `$3.0`); empty = global default |
+
+### Child Agent States
+
+| Status | Meaning |
+|---|---|
+| `ready` | Ready to run (one-off or cron-promoted) |
+| `scheduled` | Has a cron schedule; waiting for cron to fire |
+| `running` | Currently being processed by the loop |
+| `success` | Latest run completed successfully |
+| `done` | One-off complete (parent can re-promote to `ready` to re-run) |
+| `needs-review` | Latest run failed or needs user review |
+| `paused` | Manually paused by parent agent |
+| `abort` | User requested cancellation |
+
+### State Transitions
+
+```
+ready ──(loop processes)──> running ──(completes)──>
+    ├── success ──┬── scheduled (if cron)
+    │             └── done (if no cron)
+    └── needs-review
+
+scheduled ──(cron fires)──> ready
+paused / done ──(parent)──> ready     ← direct, no approval needed
+running ──(user abort)──> abort       ← loop kills harness
+```
+
+### Managing Children (Propose/Approve Workflow)
+
+The parent agent manages children through two tiers of actions:
+
+**High-risk (requires user approval):**
+- Create a new child agent
+- Update a child's config (sources, note_path, topic, schedule type)
+- Delete a child agent
+
+The parent writes a proposal to `CONVERSATION.md` with the `RUNS.md` config to create/modify and the `WORK-CHILDREN.md` row to add. After user approval, the parent executes.
+
+**Low-risk (direct — no approval needed):**
+- Pause a child agent
+- Resume a child agent
+- Re-run a completed one-off child
+
+The parent updates the child's status in `WORK-CHILDREN.md` directly and logs the action in `CONVERSATION.md`.
+
+### Child Run Config
+
+Child agents use `RUNS.md` (same format as top-level research items) with an additional `parent:` key:
+
+```markdown
+## Config
+type: research
+parent: {ITEM_ID}
+topic: Neighborhood walkability analysis
+note_path: ../context/area-walkability.md
+sources:
+  https://www.walkscore.com/score/Kuala-Lumpur
+schedule: 0 */6 * * *
+
+## Research Context
+Evaluate walkability for top 5 KL neighborhoods.
+```
+
+- `parent: {ITEM_ID}` — required; links the child to its parent for discovery and orphan detection
+- `note_path` — relative to the child's `children/{name}/` directory; typically `../context/...` to write to the parent's shared context
+- Children write results to `runs/{run_id}/research.md`
+- Children must have unique `note_path` values; the loop enforces this at process time
 
 ## Script Items
 
@@ -241,16 +335,17 @@ python3 -m pytest test_run_loop.py -v
 
 ## Prompt Files
 
-Four prompt files control agent behavior. They are injected automatically based on the item's status:
+Five prompt files control agent behavior. They are injected automatically based on the item's status:
 
 | File | Triggered By | Purpose |
 |---|---|---|
-| `LOOP-PROMPT.md` | `ready`, `analyze` | Multi-agent investigation with internal critic review |
+| `LOOP-PROMPT.md` | `ready`, `analyze` | Multi-agent investigation with internal critic review + child agent management |
 | `IMPL-PROMPT.md` | `implement` | Code implementation with code review |
 | `RESOLVE-PROMPT.md` | `resolved` | Problem/resolution summary |
 | `RESEARCH-PROMPT.md` | `research` | Fetch sources, compare against note, write updated note and summary |
+| `CHILD-RESEARCH-PROMPT.md` | child research | Simplified research prompt for child agents (no WORK.md updates) |
 
-Each prompt receives `ITEM_ID`, `WORK_LOOP_DIR`, and `ITEM_DIR` as variables. Research items also receive `topic`, `note_path`, `sources`, and `research_context`.
+Each prompt receives `ITEM_ID`, `WORK_LOOP_DIR`, and `ITEM_DIR` as variables. Research items also receive `topic`, `note_path`, `sources`, and `research_context`. Child research agents additionally receive `PARENT_ID` and `PARENT_DIR` to locate the parent's context and conversation.
 
 ## Loop Execution Order
 
@@ -262,3 +357,4 @@ Each iteration of the loop:
 4. Initializes `new` items
 5. Promotes `scheduled` script and research items whose cron fires now
 6. Picks up `ready`/`analyze`/`implement`/`resolved`/`research` items and processes them
+7. Processes child research agents for all parent items (including `done` parents with active scheduled children); re-scans for newly created children after processing each parent
