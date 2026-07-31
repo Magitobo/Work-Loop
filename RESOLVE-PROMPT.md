@@ -18,10 +18,11 @@ Use the ITEM_ID, WORK_LOOP_DIR, and ITEM_DIR passed at the end of this prompt.
 2. Read `ITEM_DIR/background.md` for internal context (if present).
 3. Read all files in `ITEM_DIR/context/` for additional context (if present).
 4. From the conversation, identify: what the problem was, and how it was resolved.
-5. Prepend a new entry to `ITEM_DIR/CONVERSATION.md` in this format:
+5. Write a new entry to `ITEM_DIR/CONVERSATION.md` using a file write tool. You MUST actually
+   write to the file — do NOT just include the text in your response:
 
 ---
-## {YYYY-MM-DD} | Claude
+## {YYYY-MM-DD} | AI Agent
 
 ## Resolution
 **Problem:** [1–2 sentence summary of what the problem or task was]
@@ -29,7 +30,8 @@ Use the ITEM_ID, WORK_LOOP_DIR, and ITEM_DIR passed at the end of this prompt.
 
 ---
 
-6. Update `WORK_LOOP_DIR/WORK.md`: find the row with ITEM_ID, and move the row to the Done section
+6. Update `WORK_LOOP_DIR/WORK.md` using a file write tool. You MUST actually write to the file:
+   find the row with ITEM_ID, and move the row to the Done section
    (keep the Status as 'resolved' — do not change it).
    If the Title cell is plain text (not a markdown link), replace it with
    `[concise title](ITEM_ID/CONVERSATION.md)`.

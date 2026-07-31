@@ -17,7 +17,7 @@ Each iteration implements ONE item with a fresh context. The script determines w
 Use the ITEM_ID, WORK_LOOP_DIR, and ITEM_DIR passed at the end of this prompt.
 
 1. Read `ITEM_DIR/CONVERSATION.md` for prior thread (newest first — read bottom-up for history).
-   Any user entry after the latest Claude entry is updated guidance for this iteration.
+   Any user entry after the latest AI Agent entry is updated guidance for this iteration.
    This file also contains the `work_dir:` path you are running from.
 2. Read `ITEM_DIR/background.md` for internal context (if present).
 3. Read all files in `ITEM_DIR/context/` for additional context (if present).
@@ -40,10 +40,11 @@ Use the ITEM_ID, WORK_LOOP_DIR, and ITEM_DIR passed at the end of this prompt.
    Wait for it to complete. Address any MUST-FIX findings before proceeding. Note
    SHOULD-FIX and SUGGESTION items in the CONVERSATION.md Issues section below.
 
-7. Prepend a new entry to `ITEM_DIR/CONVERSATION.md` in this format:
+7. Write a new entry to `ITEM_DIR/CONVERSATION.md` using a file write tool. You MUST actually
+   write to the file — do NOT just include the text in your response:
 
 ---
-## {YYYY-MM-DD} | Claude
+## {YYYY-MM-DD} | AI Agent
 
 ### Summary
 - [what was implemented / changed]
@@ -56,6 +57,7 @@ Use the ITEM_ID, WORK_LOOP_DIR, and ITEM_DIR passed at the end of this prompt.
 
 ---
 
-8. Update `WORK_LOOP_DIR/WORK.md`: find the row with ITEM_ID, set Status to "needs-review".
+8. Update `WORK_LOOP_DIR/WORK.md` using a file write tool. You MUST actually write to the file:
+   find the row with ITEM_ID, set Status to "needs-review".
    If the Title cell is plain text (not a markdown link), replace it with
    `[concise title](ITEM_ID/CONVERSATION.md)`.

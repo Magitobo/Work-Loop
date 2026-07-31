@@ -24,7 +24,7 @@ Read all available context:
 
 1. Read `{ITEM_DIR}/CONVERSATION.md` in full (newest first — history at bottom). The thread
    is both the record of prior findings and the place where you receive updated instructions.
-   Any user entry after a Claude entry should be treated as updated guidance for this iteration.
+   Any user entry after an AI Agent entry should be treated as updated guidance for this iteration.
 2. Read `{ITEM_DIR}/background.md` if it exists
 3. Read all files under `{ITEM_DIR}/context/`
 4. If ITEM_ID looks like a Jira key (e.g. DBGTRC-1234), fetch via Jira MCP and download
@@ -54,9 +54,9 @@ Q: another question
 --- END DRAFT ---
 ```
 
-Answer each question from the prior Claude entry's Questions list and each inline "Oliver:"
-annotation. Use context files, Jira, and your own knowledge freely — for Claude Code
-features, YAML syntax, or general software engineering, answer from knowledge.
+Answer each question from the prior AI Agent entry's Questions list and each inline "Oliver:"
+annotation. Use context files, Jira, and your own knowledge freely — for any agent features,
+YAML syntax, or general software engineering, answer from knowledge.
 If genuinely unanswerable, write `Q: [original question] (unanswerable — [reason])` and
 carry it forward to the Questions section in Step 4.
 
@@ -97,10 +97,13 @@ The result is the FINAL Answers, Findings, and Questions.
 
 ## Step 4 — Write CONVERSATION.md
 
+You MUST use a file write tool (read + edit/overwrite) to actually write to the file. Do NOT
+just include the text in your response — it must be written to disk.
+
 Prepend to `{ITEM_DIR}/CONVERSATION.md`:
 
 ```
-## {YYYY-MM-DD} | Claude
+## {YYYY-MM-DD} | AI Agent
 
 {Include this section only if there were prior questions to answer:}
 ### Answers to Prior Questions
@@ -118,6 +121,9 @@ Prepend to `{ITEM_DIR}/CONVERSATION.md`:
 No Critic Review section. No Code Review section. The user sees only the clean, already-reviewed output.
 
 ## Step 5 — Update WORK.md
+
+You MUST use a file write tool (read + edit/overwrite) to actually write to the file. Do NOT
+just include the text in your response — it must be written to disk.
 
 Find the row with {ITEM_ID} in `{WORK_LOOP_DIR}/WORK.md`. Set Status to "needs-review".
 If the Title cell is plain text (not a markdown link), derive a concise title (3–6 words) and
