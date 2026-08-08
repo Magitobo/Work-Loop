@@ -14,6 +14,12 @@ entry is already reviewed and corrected before the user sees it.
   `[[CONVERSATION]]` near the top
 - Add wiki links to all files you modified or created
 
+## Before you start
+
+Create a TODO list with every step below (Step 1 through Step 6). Mark each as
+you go. Do NOT begin any analysis until the list exists. If you get interrupted,
+resume by checking which items are still pending.
+
 ---
 
 Use ITEM_ID, WORK_LOOP_DIR, and ITEM_DIR passed below.
@@ -31,24 +37,25 @@ Read all available context:
    any relevant attachments or images
 
 Then produce a **DRAFT** (in-context only — do NOT write to CONVERSATION.md yet).
-Use compact shorthand — the Critic reads the DRAFT verbatim and understands these prefixes:
+Write full, expanded findings — the Critic reads the DRAFT verbatim. Use these prefixes:
 
 ```
 --- DRAFT ---
 
+CONTEXT: {user situation, directionality, key constraints — anchor the critic to what Oliver actually needs}
+
 SRC: {ITEM_DIR}/CONVERSATION.md: loaded | {ITEM_DIR}/background.md: not found | ...
 (one SRC: line per source — "loaded", "not found", or "COULD NOT READ")
 
-ANS [Q1 or Oliver annotation text]: answer in one line
-ANS [Q2]: answer in one line
+ANS [Q1 or Oliver annotation text]: full answer with reasoning
+ANS [Q2]: full answer with reasoning
 (repeat for each prior question or Oliver: annotation; omit entire ANS block if none)
 
-FIND: finding, one line
-FIND: another finding
+FIND: {finding with full detail, reasoning, and any caveats — not a one-liner}
 (repeat for each finding)
 
-Q: question requiring user input, one line
-Q: another question
+Q: {question requiring user input, one line}
+Q: {another question}
 (repeat for open questions; omit if none)
 
 --- END DRAFT ---

@@ -11,7 +11,7 @@ import tempfile
 import threading
 import time
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -118,31 +118,31 @@ class ClaudeHarness(Harness):
             extra_vars = f"$'\\nITEM_ID: {item_id}\\nWORK_LOOP_DIR: {remote_work_dir}\\nITEM_DIR: {remote_work_dir}/{item_id}'"
             rwd_capture = 'RWD="$(pwd)"\n'
             cd_work = f"cd {work_dir}\n" if work_dir else ""
-            debug_flag = f'--debug-file "$RWD/.logs/{ts_str}_{item_id}.debug" '
-            log_redir = f'> "$RWD/.logs/{ts_str}_{item_id}.log" 2>&1'
+            debug_flag = f'--debug-file "$RWD/{item_id}/.logs/{ts_str}_{item_id}.debug" '
+            log_redir = f'> "$RWD/{item_id}/.logs/{ts_str}_{item_id}.log" 2>&1'
             done_dir = '$RWD'
         elif mode == "resolved":
             prompt_file = "RESOLVE-PROMPT.md"
             extra_vars = f"$'\\nITEM_ID: {item_id}'"
             rwd_capture = ""
             cd_work = ""
-            debug_flag = f'--debug-file ".logs/{ts_str}_{item_id}.debug" '
-            log_redir = f'> ".logs/{ts_str}_{item_id}.log" 2>&1'
+            debug_flag = f'--debug-file "{item_id}/.logs/{ts_str}_{item_id}.debug" '
+            log_redir = f'> "{item_id}/.logs/{ts_str}_{item_id}.log" 2>&1'
             done_dir = '.'
         else:
             prompt_file = "LOOP-PROMPT.md"
             extra_vars = f"$'\\nITEM_ID: {item_id}'"
             rwd_capture = ""
             cd_work = ""
-            debug_flag = f'--debug-file ".logs/{ts_str}_{item_id}.debug" '
-            log_redir = f'> ".logs/{ts_str}_{item_id}.log" 2>&1'
+            debug_flag = f'--debug-file "{item_id}/.logs/{ts_str}_{item_id}.debug" '
+            log_redir = f'> "{item_id}/.logs/{ts_str}_{item_id}.log" 2>&1'
             done_dir = '.'
         return (
             "#!/bin/bash\n"
             'export NVM_DIR="$HOME/.nvm"\n'
             '[ -s "$NVM_DIR/nvm.sh" ] && \\. "$NVM_DIR/nvm.sh"\n'
             f"cd {remote_work_dir}\n"
-            "mkdir -p .logs\n"
+            f"mkdir -p {item_id}/.logs\n"
             f"{rwd_capture}"
             f'PROMPT="$(cat {prompt_file})"{extra_vars}\n'
             f"{cd_work}"
@@ -304,26 +304,26 @@ class OpenCodeHarness(Harness):
             extra_vars = f"$'\\nITEM_ID: {item_id}\\nWORK_LOOP_DIR: {remote_work_dir}\\nITEM_DIR: {remote_work_dir}/{item_id}'"
             rwd_capture = 'RWD="$(pwd)"\n'
             cd_work = f"cd {work_dir}\n" if work_dir else ""
-            log_redir = f'> "$RWD/.logs/{ts_str}_{item_id}.log" 2>&1'
+            log_redir = f'> "$RWD/{item_id}/.logs/{ts_str}_{item_id}.log" 2>&1'
             done_dir = '$RWD'
         elif mode == "resolved":
             prompt_file = "RESOLVE-PROMPT.md"
             extra_vars = f"$'\\nITEM_ID: {item_id}'"
             rwd_capture = ""
             cd_work = ""
-            log_redir = f'> ".logs/{ts_str}_{item_id}.log" 2>&1'
+            log_redir = f'> "{item_id}/.logs/{ts_str}_{item_id}.log" 2>&1'
             done_dir = '.'
         else:
             prompt_file = "LOOP-PROMPT.md"
             extra_vars = f"$'\\nITEM_ID: {item_id}'"
             rwd_capture = ""
             cd_work = ""
-            log_redir = f'> ".logs/{ts_str}_{item_id}.log" 2>&1'
+            log_redir = f'> "{item_id}/.logs/{ts_str}_{item_id}.log" 2>&1'
             done_dir = '.'
         return (
             "#!/bin/bash\n"
             f"cd {remote_work_dir}\n"
-            "mkdir -p .logs\n"
+            f"mkdir -p {item_id}/.logs\n"
             f"{rwd_capture}"
             f'PROMPT="$(cat {prompt_file})"{extra_vars}\n'
             f"{cd_work}"
@@ -393,7 +393,6 @@ class WorkLoop:
         self.max_budget = config.get('harness', {}).get('max_budget_usd', 10.00)
         self.remote_work_dir = config.get('remote', {}).get('work_dir', '~/Work-Loop')
         self.work_file = self.work_dir / "WORK.md"
-        self.log_dir = self.work_dir / ".logs"
         self._stop = False
 
         # Build harness
@@ -732,7 +731,7 @@ class WorkLoop:
 
     def _classify_failure(self, item_id: str, ts_str: str) -> str:
         """Return 'budget' or 'unknown' by inspecting the log file."""
-        log_file = self.log_dir / f"{ts_str}_{item_id}.log"
+        log_file = self.work_dir / item_id / ".logs" / f"{ts_str}_{item_id}.log"
         if not log_file.exists():
             return "unknown"
         try:
@@ -749,11 +748,14 @@ class WorkLoop:
 
     def process_local(self, item_id: str, budget: float) -> None:
         self._auto_init_conversation(item_id)
+        item_dir = self.work_dir / item_id
+        item_dir.mkdir(parents=True, exist_ok=True)
+        (item_dir / ".logs").mkdir(parents=True, exist_ok=True)
         today = datetime.now().strftime('%Y-%m-%d')
         ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        run_start = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.000Z')
-        log_file = self.log_dir / f"{ts}_{item_id}.log"
-        log_link = f"[Log](.logs/{ts}_{item_id}.debug)"
+        run_start = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        log_file = item_dir / ".logs" / f"{ts}_{item_id}.log"
+        log_link = f"[Log]({item_id}/.logs/{ts}_{item_id}.debug)"
 
         mode = self.get_col(item_id, COL_STATUS)  # read trigger status BEFORE overwriting
         self.update_col(item_id, COL_STATUS, "in-progress")
@@ -878,7 +880,7 @@ class WorkLoop:
     def dispatch_remote(self, item_id: str, ts_str: str, remote_host: str, budget: float, mode: str = "analyze") -> None:
         self._auto_init_conversation(item_id)
         rwd = self.remote_work_dir
-        _run(["ssh", remote_host, f"rm -rf {rwd} && mkdir -p {rwd}/.logs"])
+        _run(["ssh", remote_host, f"rm -rf {rwd} && mkdir -p {rwd}/{item_id}/.logs"])
 
         item_dir = self.work_dir / item_id
         _run(["rsync", "-avz", "--delete", "--exclude=.done", f"{item_dir}/", f"{remote_host}:{rwd}/{item_id}/"])
@@ -939,19 +941,20 @@ class WorkLoop:
         """Sync files back from a completed remote job, update WORK.md, clean up remote."""
         rwd = self.remote_work_dir
         today = datetime.now().strftime('%Y-%m-%d')
-        log_link = f"[Log](.logs/{ts_str}_{item_id}.debug)"
+        log_link = f"[Log]({item_id}/.logs/{ts_str}_{item_id}.debug)"
 
         item_dir = self.work_dir / item_id
+        item_dir.mkdir(parents=True, exist_ok=True)
         _run(["rsync", "-avz", "--delete", "--exclude=.done", f"{remote_host}:{rwd}/{item_id}/", f"{item_dir}/"])
         _run([
             "rsync", "-avz",
-            f"{remote_host}:{rwd}/.logs/{ts_str}_{item_id}.log",
-            str(self.log_dir) + "/",
+            f"{remote_host}:{rwd}/{item_id}/.logs/{ts_str}_{item_id}.log",
+            str(item_dir / ".logs") + "/",
         ], check=False)
         _run([
             "rsync", "-avz",
-            f"{remote_host}:{rwd}/.logs/{ts_str}_{item_id}.debug",
-            str(self.log_dir) + "/",
+            f"{remote_host}:{rwd}/{item_id}/.logs/{ts_str}_{item_id}.debug",
+            str(item_dir / ".logs") + "/",
         ], check=False)
 
         # Capture Claude's concise title before remote cleanup (written to stub WORK.md)
@@ -1007,11 +1010,11 @@ class WorkLoop:
         )
         if m:
             return m.group(1)
-        # Fallback for dispatches made before this fix: find the log on the remote
+        # Fallback: find the log on the remote
         rwd = self.remote_work_dir
         result = subprocess.run(
             ["ssh", "-o", "ConnectTimeout=5", remote_host,
-             f"ls {rwd}/.logs/*_{item_id}.debug 2>/dev/null | head -1 || ls {rwd}/.logs/*_{item_id}.log 2>/dev/null | head -1"],
+             f"ls {rwd}/{item_id}/.logs/*_{item_id}.debug 2>/dev/null | head -1 || ls {rwd}/{item_id}/.logs/*_{item_id}.log 2>/dev/null | head -1"],
             capture_output=True, text=True,
         )
         if result.stdout.strip():
@@ -1069,14 +1072,15 @@ class WorkLoop:
 
         # Sync back whatever was written before we killed it
         item_dir = self.work_dir / item_id
+        item_dir.mkdir(parents=True, exist_ok=True)
         _run(["rsync", "-avz", "--delete", "--exclude=.done", "--exclude=.pid",
               f"{remote_host}:{rwd}/{item_id}/", f"{item_dir}/"], check=False)
         _run(["rsync", "-avz",
-              f"{remote_host}:{rwd}/.logs/{ts_str}_{item_id}.log",
-              str(self.log_dir) + "/"], check=False)
+              f"{remote_host}:{rwd}/{item_id}/.logs/{ts_str}_{item_id}.log",
+              str(item_dir / ".logs") + "/"], check=False)
         _run(["rsync", "-avz",
-              f"{remote_host}:{rwd}/.logs/{ts_str}_{item_id}.debug",
-              str(self.log_dir) + "/"], check=False)
+              f"{remote_host}:{rwd}/{item_id}/.logs/{ts_str}_{item_id}.debug",
+              str(item_dir / ".logs") + "/"], check=False)
 
         subprocess.run(["ssh", remote_host, f"rm -rf {rwd}"], check=False)
 
@@ -1664,8 +1668,10 @@ class WorkLoop:
         )
         cwd = str(self.work_dir)
 
-        log_file = self.log_dir / f"{ts}_{parent_id}_{child_name}.log"
-        log_link = f"[Log](.logs/{ts}_{parent_id}_{child_name}.debug)"
+        logs_dir = self.work_dir / parent_id / ".logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_file = logs_dir / f"{ts}_{parent_id}_{child_name}.log"
+        log_link = f"[Log]({parent_id}/.logs/{ts}_{parent_id}_{child_name}.debug)"
         print(f"[{_ts()}] Processing child: {parent_id}/{child_name} (budget: ${budget}, run_id: {run_id})")
 
         exit_code = self._run_harness(prompt, log_file, budget, cwd=cwd, item_id=f"{parent_id}/{child_name}")
@@ -1893,10 +1899,13 @@ class WorkLoop:
         self, item_id: str, run_id: str, analysis_prompt: str, budget: float
     ) -> int:
         ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        log_file = self.log_dir / f"{ts}_{item_id}-analysis.log"
+        item_dir = self.work_dir / item_id
+        item_dir.mkdir(parents=True, exist_ok=True)
+        (item_dir / ".logs").mkdir(parents=True, exist_ok=True)
+        log_file = item_dir / ".logs" / f"{ts}_{item_id}-analysis.log"
         actual_prompt = analysis_prompt.replace('{run-id}', run_id)
         prompt = f"{actual_prompt}\n\nITEM_ID: {item_id}\nRUN_ID: {run_id}"
-        return self.run_claude(prompt, log_file, budget, cwd=str(self.work_dir / item_id))
+        return self._run_harness(prompt, log_file, budget, cwd=str(self.work_dir / item_id))
 
     def _fan_in(self, item_id: str, run_id: str, config: dict, state: dict) -> None:
         """Aggregate results, run analysis, update statuses."""
@@ -2028,7 +2037,6 @@ class WorkLoop:
             sys.exit(0)
 
         signal.signal(signal.SIGINT, _handle_sigint)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"[{_ts()}] Work loop started. Default budget: ${self.max_budget} (override per item via Budget column). Press Ctrl+C to stop.")
 
@@ -2100,7 +2108,7 @@ class WorkLoop:
                     mode = self.get_col(item_id, COL_STATUS)
                     print(f"[{_ts()}] Dispatching to {location}: {item_id} (mode: {mode}, budget: ${budget})")
                     self.update_col(item_id, COL_STATUS, "in-progress")
-                    self.update_col(item_id, COL_LOG, f"[Log](.logs/{ts}_{item_id}.debug)")
+                    self.update_col(item_id, COL_LOG, f"[Log]({item_id}/.logs/{ts}_{item_id}.debug)")
                     self.dispatch_remote(item_id, ts, location, budget, mode=mode)
                     self.wait_for_remote(item_id, ts, location, budget, mode=mode)
                 else:

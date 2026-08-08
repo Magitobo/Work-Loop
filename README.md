@@ -53,9 +53,9 @@ Work-Loop/                    ← scripts repo
 ├── .claude/ or .opencode/    ← agent config (harness-dependent)
 └── <work_dir>/               ← work items (path configured in config.json)
     ├── WORK.md               ← main work item table
-    ├── .logs/                ← harness logs
     └── <item-id>/            ← one folder per item
         ├── CONVERSATION.md   ← thread between user and agent
+        ├── .logs/            ← harness logs
         ├── background.md     ← (optional) internal context
         ├── WORK-CHILDREN.md  ← (optional) child agent registry
         ├── context/          ← (optional) shared research output

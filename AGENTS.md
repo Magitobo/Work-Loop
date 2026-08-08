@@ -22,9 +22,9 @@ MyNotebook/
 │       └── agents/         ← subagent definitions (critic.md, code-reviewer.md)
 └── Work-Loop-Items/        ← work items (part of the vault, not the scripts repo)
     ├── WORK.md             ← main work item table
-    ├── .logs/              ← harness logs
     └── <item-id>/          ← one folder per work item
         ├── CONVERSATION.md ← thread between user and agent
+        ├── .logs/          ← harness logs
         ├── RUNS.md         ← (script items only) run history + config
         ├── background.md   ← (optional) internal context
         ├── context/        ← (optional) additional context files

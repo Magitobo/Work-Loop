@@ -251,7 +251,7 @@ class TestLauncherScriptImplementMode(unittest.TestCase):
         self.assertIn("RWD=", self._script())
 
     def test_uses_rwd_for_log_path(self):
-        self.assertIn("$RWD/.logs/", self._script())
+        self.assertIn("$RWD/ITEM-001/.logs/", self._script())
 
     def test_uses_rwd_for_done_sentinel(self):
         self.assertIn("$RWD/ITEM-001/.done", self._script())
@@ -889,8 +889,8 @@ class TestClassifyFailure(unittest.TestCase):
 
     def _make_wl_with_log(self, tmp: str, log_content: str) -> WorkLoop:
         wl = _make_workloop(tmp)
-        log_dir = Path(tmp) / ".logs"
-        log_dir.mkdir(exist_ok=True)
+        log_dir = Path(tmp) / "MY-ITEM" / ".logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
         (log_dir / f"{self.TS}_MY-ITEM.log").write_text(log_content)
         return wl
 
@@ -1349,7 +1349,7 @@ class TestLauncherDebugFile(unittest.TestCase):
 
     def test_implement_debug_file_uses_rwd(self):
         script = self.wl.build_launcher("ITEM-001", self.TS, budget=10.0, mode="implement")
-        self.assertIn('$RWD/.logs/', script)
+        self.assertIn('$RWD/ITEM-001/.logs/', script)
 
     def test_analyze_debug_file_path_contains_ts_and_item(self):
         script = self.wl.build_launcher("ITEM-001", self.TS, budget=10.0, mode="analyze")
