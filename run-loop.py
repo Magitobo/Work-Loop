@@ -206,7 +206,7 @@ class OpenCodeHarness(Harness):
         cmd = [
             "opencode", "run",
             "--auto",
-            # --format default gives readable terminal output in log
+            "--format", "json",
             "--title", item_id or "work-loop",
         ] + model_arg
         if cwd:
@@ -724,6 +724,8 @@ class WorkLoop:
         if not src.exists():
             return
         dst = Path(target_cwd) / self.harness.agent_dir_name()
+        if src.resolve() == dst.resolve():
+            return
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst)

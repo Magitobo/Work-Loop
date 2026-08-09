@@ -55,7 +55,7 @@ Work-Loop/                    ← scripts repo
     ├── WORK.md               ← main work item table
     └── <item-id>/            ← one folder per item
         ├── CONVERSATION.md   ← thread between user and agent
-        ├── .logs/            ← harness logs
+        ├── _logs/            ← harness logs
         ├── background.md     ← (optional) internal context
         ├── WORK-CHILDREN.md  ← (optional) child agent registry
         ├── context/          ← (optional) shared research output

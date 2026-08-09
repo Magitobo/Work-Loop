@@ -3,3 +3,5 @@ config.json
 .DS_Store
 .opencode/*
 !.opencode/agents/
+e2e_results.log
+e2e_state.json

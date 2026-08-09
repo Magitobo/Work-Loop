@@ -24,7 +24,7 @@ MyNotebook/
     ├── WORK.md             ← main work item table
     └── <item-id>/          ← one folder per work item
         ├── CONVERSATION.md ← thread between user and agent
-        ├── .logs/          ← harness logs
+        ├── _logs/          ← harness logs
         ├── RUNS.md         ← (script items only) run history + config
         ├── background.md   ← (optional) internal context
         ├── context/        ← (optional) additional context files

@@ -201,7 +201,7 @@ class TestLauncherScript(unittest.TestCase):
     def test_launcher_contains_log_path(self):
         ts = "2026-05-14_10-00-00"
         script = self.wl.build_launcher("ITEM-001", ts, budget=self.wl.max_budget)
-        self.assertIn(f".logs/{ts}_ITEM-001.log", script)
+        self.assertIn(f"_logs/{ts}_ITEM-001.log", script)
 
     def test_launcher_starts_with_shebang(self):
         script = self.wl.build_launcher("ITEM-001", "2026-05-14_10-00-00", budget=self.wl.max_budget)
@@ -251,7 +251,7 @@ class TestLauncherScriptImplementMode(unittest.TestCase):
         self.assertIn("RWD=", self._script())
 
     def test_uses_rwd_for_log_path(self):
-        self.assertIn("$RWD/ITEM-001/.logs/", self._script())
+        self.assertIn("$RWD/ITEM-001/_logs/", self._script())
 
     def test_uses_rwd_for_done_sentinel(self):
         self.assertIn("$RWD/ITEM-001/.done", self._script())
@@ -845,7 +845,7 @@ class TestTsStrFromLogCol(unittest.TestCase):
         return _make_workloop(tempfile.mkdtemp(), content)
 
     def test_extracts_from_log_col(self):
-        log_col = f"[Log](.logs/{self.TS}_MY-ITEM.log)"
+        log_col = f"[Log](_logs/{self.TS}_MY-ITEM.log)"
         wl = self._make_wl("MY-ITEM", log_col)
         self.assertEqual(wl._ts_str_from_log_col("MY-ITEM", "user@host"), self.TS)
 
@@ -863,7 +863,7 @@ class TestTsStrFromLogCol(unittest.TestCase):
         wl = self._make_wl("MY-ITEM", "")
         with patch.object(run_loop, 'subprocess') as mock_sub:
             r = MagicMock()
-            r.stdout = f"/home/user/Work-Loop/.logs/{self.TS}_MY-ITEM.log\n"
+            r.stdout = f"/home/user/Work-Loop/_logs/{self.TS}_MY-ITEM.log\n"
             mock_sub.run.return_value = r
             self.assertEqual(wl._ts_str_from_log_col("MY-ITEM", "user@host"), self.TS)
 
@@ -889,7 +889,7 @@ class TestClassifyFailure(unittest.TestCase):
 
     def _make_wl_with_log(self, tmp: str, log_content: str) -> WorkLoop:
         wl = _make_workloop(tmp)
-        log_dir = Path(tmp) / "MY-ITEM" / ".logs"
+        log_dir = Path(tmp) / "MY-ITEM" / "_logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         (log_dir / f"{self.TS}_MY-ITEM.log").write_text(log_content)
         return wl
@@ -922,7 +922,7 @@ class TestSyncBackRemote(unittest.TestCase):
         "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
         "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
         "| MY-ITEM | Original title | user@host | in-progress |  | $10.0 |"
-        " [Log](.logs/2026-06-04_10-00-00_MY-ITEM.log) |\n\n"
+        " [Log](_logs/2026-06-04_10-00-00_MY-ITEM.log) |\n\n"
         "## Done\n\n"
         "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
         "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
@@ -933,7 +933,7 @@ class TestSyncBackRemote(unittest.TestCase):
         item_dir = Path(tmp) / "MY-ITEM"
         item_dir.mkdir()
         (item_dir / "CONVERSATION.md").write_text("## 2026-01-01 | Claude\n\nFindings\n")
-        log_dir = Path(tmp) / ".logs"
+        log_dir = Path(tmp) / "_logs"
         log_dir.mkdir(exist_ok=True)
         if log_content is not None:
             (log_dir / f"{self.TS}_MY-ITEM.log").write_text(log_content)
@@ -1042,7 +1042,7 @@ class TestCheckStalledRemotes(unittest.TestCase):
 
     def _make_wl(self, tmp: str, log_col: str | None = None) -> WorkLoop:
         if log_col is None:
-            log_col = f"[Log](.logs/{self.TS}_MY-ITEM.log)"
+            log_col = f"[Log](_logs/{self.TS}_MY-ITEM.log)"
         content = (
             "# Work Loop\n\n"
             "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
@@ -1196,7 +1196,7 @@ class TestRemoteDispatch(unittest.TestCase):
             ["ssh", REMOTE_HOST,
              f"rm -rf {rwd}/{self.ITEM_ID}"
              f" {rwd}/.launch-{self.ITEM_ID}.sh"
-             f" {rwd}/.logs/*_{self.ITEM_ID}.log"],
+             f" {rwd}/_logs/*_{self.ITEM_ID}.log"],
             check=False,
         )
 
@@ -1226,7 +1226,7 @@ class TestRemoteDispatch(unittest.TestCase):
         )
 
         # Log file should exist
-        log_dir = REAL_WORK_DIR / ".logs"
+        log_dir = REAL_WORK_DIR / "_logs"
         logs = list(log_dir.glob(f"*_{self.ITEM_ID}.log"))
         self.assertTrue(len(logs) > 0, "No log file found after remote run")
 
@@ -1349,11 +1349,11 @@ class TestLauncherDebugFile(unittest.TestCase):
 
     def test_implement_debug_file_uses_rwd(self):
         script = self.wl.build_launcher("ITEM-001", self.TS, budget=10.0, mode="implement")
-        self.assertIn('$RWD/ITEM-001/.logs/', script)
+        self.assertIn('$RWD/ITEM-001/_logs/', script)
 
     def test_analyze_debug_file_path_contains_ts_and_item(self):
         script = self.wl.build_launcher("ITEM-001", self.TS, budget=10.0, mode="analyze")
-        self.assertIn(f".logs/{self.TS}_ITEM-001.debug", script)
+        self.assertIn(f"_logs/{self.TS}_ITEM-001.debug", script)
 
     def test_all_modes_valid_bash(self):
         for mode in ("analyze", "implement", "resolved"):
@@ -1494,7 +1494,7 @@ class TestProcessLocalResolvedMode(unittest.TestCase):
         )
         wl = _make_workloop(tmp, content)
         (Path(tmp) / "RESOLVE-PROMPT.md").write_text("Resolve.\n")
-        (Path(tmp) / ".logs").mkdir(exist_ok=True)
+        (Path(tmp) / "_logs").mkdir(exist_ok=True)
         item_dir = Path(tmp) / "MY-ITEM"
         item_dir.mkdir()
         (item_dir / "CONVERSATION.md").write_text("## 2026-01-01 | User\n\nDo it.\n")
@@ -1552,12 +1552,12 @@ class TestTsStrFromLogColDebug(unittest.TestCase):
         return _make_workloop(tempfile.mkdtemp(), content)
 
     def test_extracts_ts_from_debug_extension(self):
-        log_col = f"[Log](.logs/{self.TS}_MY-ITEM.debug)"
+        log_col = f"[Log](_logs/{self.TS}_MY-ITEM.debug)"
         wl = self._make_wl(log_col)
         self.assertEqual(wl._ts_str_from_log_col("MY-ITEM", "user@host"), self.TS)
 
     def test_extracts_ts_from_log_extension(self):
-        log_col = f"[Log](.logs/{self.TS}_MY-ITEM.log)"
+        log_col = f"[Log](_logs/{self.TS}_MY-ITEM.log)"
         wl = self._make_wl(log_col)
         self.assertEqual(wl._ts_str_from_log_col("MY-ITEM", "user@host"), self.TS)
 
@@ -2104,7 +2104,7 @@ class TestAbortHandling(unittest.TestCase):
             "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
         )
         wl = _make_workloop(tmp, content)
-        (Path(tmp) / ".logs").mkdir(exist_ok=True)
+        (Path(tmp) / "_logs").mkdir(exist_ok=True)
         item_dir = Path(tmp) / "MY-ITEM"
         item_dir.mkdir()
         (item_dir / "CONVERSATION.md").write_text("## 2026-01-01 | User\n\nDo it.\n")
@@ -2178,7 +2178,7 @@ class TestAbortHandling(unittest.TestCase):
             wl = self._make_wl(tmp)
             # Fast poll interval so the watcher fires without a 3-second wait.
             wl.harness._abort_poll_interval = 0.01
-            log_file = Path(tmp) / ".logs" / "test.log"
+            log_file = Path(tmp) / "_logs" / "test.log"
 
             # Process blocks on read until terminate() is called.
             import threading as _threading
@@ -2257,7 +2257,7 @@ class TestRemoteAbort(unittest.TestCase):
             "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
         )
         wl = _make_workloop(tmp, content)
-        (Path(tmp) / ".logs").mkdir(exist_ok=True)
+        (Path(tmp) / "_logs").mkdir(exist_ok=True)
         item_dir = Path(tmp) / "MY-ITEM"
         item_dir.mkdir()
         (item_dir / "CONVERSATION.md").write_text("## 2026-01-01 | User\n\nDo it.\n")
@@ -2555,7 +2555,7 @@ class TestResearchProcessLocal(unittest.TestCase):
             "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
         )
         wl = _make_research_item(tmp, "RES-001", _RESEARCH_RUNS_MD, work_md=content)
-        (Path(tmp) / ".logs").mkdir(exist_ok=True)
+        (Path(tmp) / "_logs").mkdir(exist_ok=True)
         item_dir = Path(tmp) / "RES-001"
         (item_dir / "CONVERSATION.md").write_text("## 2026-01-01 | User\n\nResearch item: AI Security\n")
         return wl
@@ -2593,7 +2593,7 @@ sources:
         )
         tmp = tempfile.mkdtemp()
         wl = _make_research_item(tmp, "RES-001", runs_md, work_md=content)
-        (Path(tmp) / ".logs").mkdir(exist_ok=True)
+        (Path(tmp) / "_logs").mkdir(exist_ok=True)
         item_dir = Path(tmp) / "RES-001"
         (item_dir / "CONVERSATION.md").write_text("## 2026-01-01 | User\n\nResearch item: Test\n")
 
@@ -2679,7 +2679,7 @@ class TestResearchFallbackPrompt(unittest.TestCase):
         (p / "WORK.md").write_text(content)
         # No RESEARCH-PROMPT.md — only LOOP-PROMPT.md
         (p / "LOOP-PROMPT.md").write_text("LOOP prompt content\n")
-        (p / ".logs").mkdir(exist_ok=True)
+        (p / "_logs").mkdir(exist_ok=True)
 
         item_dir = p / "RES-001"
         item_dir.mkdir()
@@ -2735,7 +2735,7 @@ def _make_parent_with_children(tmp_dir: str, parent_id: str, children: list[dict
     (p / "WORK.md").write_text(work_md)
     (p / "LOOP-PROMPT.md").write_text("Do the work.\n")
     (p / "CHILD-RESEARCH-PROMPT.md").write_text("Child research prompt.\n")
-    (p / ".logs").mkdir(exist_ok=True)
+    (p / "_logs").mkdir(exist_ok=True)
 
     parent_dir = p / parent_id
     parent_dir.mkdir(parents=True, exist_ok=True)
@@ -3031,7 +3031,7 @@ class TestProcessChild(unittest.TestCase):
             )
             (p / "LOOP-PROMPT.md").write_text("Do the work.\n")
             (p / "CHILD-RESEARCH-PROMPT.md").write_text("Child research prompt.\n")
-            (p / ".logs").mkdir(exist_ok=True)
+            (p / "_logs").mkdir(exist_ok=True)
             parent_dir = p / "PARENT-001"
             parent_dir.mkdir()
             (parent_dir / "CONVERSATION.md").write_text("## 2026-01-01 | User\n\nParent\n")
