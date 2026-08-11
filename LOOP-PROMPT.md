@@ -16,7 +16,7 @@ entry is already reviewed and corrected before the user sees it.
 
 ## Before you start
 
-Create a TODO list with every step below (Step 1 through Step 6). Mark each as
+Create a TODO list with every step below (Step 1 through Step 7). Mark each as
 you go. Do NOT begin any analysis until the list exists. If you get interrupted,
 resume by checking which items are still pending.
 
@@ -249,3 +249,31 @@ Synthesize child run results in your CONVERSATION.md findings:
 - You create/update/delete children through proposals. You can pause/resume directly.
 - Never write to WORK.md or WORK-CHILDREN.md's Status column — the loop handles that
 - Backlinks: child-generated files should link to `[[{ITEM_ID}/CONVERSATION]]`
+
+## Step 7 — Verified Research (On Request)
+
+When the user asks you to research a question from the web, invoke the verified-research
+sub-agent. This agent performs multi-angle search with source verification, claim extraction
+with confidence ratings, and contradiction resolution.
+
+**`subagent_type="verified-research"`:**
+
+```
+Research this question and return verified findings.
+
+ITEM_DIR: {ITEM_DIR}
+
+Research question: {the user's question}
+Context: {any relevant context from the conversation or ITEM_DIR}
+Output note path: {where to write the synthesized note, if requested}
+
+Perform all 6 phases: Query Expansion, Source Fetch + Rate, Extract + Rate Claims,
+Synthesize, Coverage Check, and return structured output.
+```
+
+Wait for it to complete. Then present its findings to the user. The user may ask you to
+refine sources, investigate specific claims further, or adjust the synthesis before
+writing the final note to the vault.
+
+**When to use:** The user explicitly asks for web research, fact-checking, or information
+discovery on a topic. Do NOT invoke proactively — only when the user requests it.

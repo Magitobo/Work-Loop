@@ -1,6 +1,6 @@
-# Work Loop Prompt — Child Research Agent
+# Work Loop Prompt — Research Agent
 
-Each iteration runs a research cycle on ONE topic. The script determines which topic.
+Each iteration runs a research cycle on ONE item. The script determines which item.
 
 ## Ground rules
 - Your job is to **research and update**, not to implement or analyze broadly
@@ -9,14 +9,26 @@ Each iteration runs a research cycle on ONE topic. The script determines which t
 - Write an updated version of the note (overwrite in-place)
 - Write a research summary to `{ITEM_DIR}/runs/{run_id}/research.md`
 - Use Obsidian wiki links `[[filename]]` for all references
-- Any file you create must include a back-link to `[[{PARENT_ID}/CONVERSATION]]` near the top
+- Any file you create must include a back-link to `[[{BACKLINK_TARGET}]]` near the top
 - Be concise in the note — bullet points, not essays
 - In the research summary, list each change with a date, description, and source URL
 
-Use PARENT_ID, PARENT_DIR, WORK_LOOP_DIR, and ITEM_DIR passed at the end of this prompt.
+---
 
-## Step 1 — Load Your Config
+Use ITEM_ID, WORK_LOOP_DIR, ITEM_DIR, BACKLINK_TARGET, and run_id passed at the end of this prompt.
+If PARENT_ID is set, you are operating as a **child agent** (see child-mode instructions below).
 
+## Step 1 — Load Context
+
+**Parent mode** (PARENT_ID not set):
+1. Read `{ITEM_DIR}/CONVERSATION.md` for prior research thread (newest first — read bottom-up for history).
+2. Read `{ITEM_DIR}/background.md` for internal context (if present).
+3. Read `{ITEM_DIR}/context/` for additional context (if present).
+4. Read the research config from `{ITEM_DIR}/RUNS.md` — extract sources, note_path, and Research Context.
+5. Read the existing note at the target path (resolve the wiki link to a file path).
+6. Read prior run summaries from `{ITEM_DIR}/runs/` (newest first) for context on what was already found.
+
+**Child mode** (PARENT_ID is set):
 1. Read `{ITEM_DIR}/RUNS.md` — extract topic, sources, note_path, and `## Research Context`.
 2. Read the existing note at `note_path` (resolve the relative path from `{ITEM_DIR}`).
 3. Read prior run summaries from `{ITEM_DIR}/runs/` (newest first) for context on what was already found.
@@ -64,6 +76,11 @@ Create `{ITEM_DIR}/runs/{run_id}/research.md`:
 - [Any gaps, questions, or follow-ups]
 ```
 
-Include a back-link to `[[{PARENT_ID}/CONVERSATION]]` at the top of the file if it's a new file.
+Include a back-link to `[[{BACKLINK_TARGET}]]` at the top of the file if it's a new file.
 
-That's all. Do not attempt to modify any WORK-*.md file. Status tracking is handled automatically.
+## Step 6 — Update WORK.md (Parent mode only)
+
+**Parent mode**: Find the row with `{ITEM_ID}` in `{WORK_LOOP_DIR}/WORK.md`. Set Status to "needs-review".
+If the Title cell is plain text (not a markdown link), derive a concise title and replace with `[concise title]({ITEM_ID}/CONVERSATION.md)`.
+
+**Child mode**: Do NOT modify any WORK-*.md file. Status tracking is handled automatically.

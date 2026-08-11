@@ -414,7 +414,7 @@ class WorkLoop:
         self.prompt_file = self.script_dir / "LOOP-PROMPT.md"
         self.impl_prompt_file = self.script_dir / "IMPL-PROMPT.md"
         self.resolve_prompt_file = self.script_dir / "RESOLVE-PROMPT.md"
-        self.child_research_prompt_file = self.script_dir / "CHILD-RESEARCH-PROMPT.md"
+        self.child_research_prompt_file = self.script_dir / "UPDATE-RESEARCH-PROMPT.md"
 
     # -------------------------------------------------------------------------
     # WORK.md I/O
@@ -781,12 +781,12 @@ class WorkLoop:
 
         if mode == "research":
             config = self._parse_runs_md(item_id)
-            research_prompt_file = self.script_dir / "RESEARCH-PROMPT.md"
+            research_prompt_file = self.script_dir / "UPDATE-RESEARCH-PROMPT.md"
             if research_prompt_file.exists():
                 prompt_text = research_prompt_file.read_text()
             else:
                 prompt_text = self.prompt_file.read_text()
-                print(f"[{_ts()}] WARNING: RESEARCH-PROMPT.md not found, using LOOP-PROMPT.md")
+                print(f"[{_ts()}] WARNING: UPDATE-RESEARCH-PROMPT.md not found, using LOOP-PROMPT.md")
 
             sources = config.get('sources', [])
             sources_str = '\n'.join(f'- {s.strip()}' for s in sources) if sources else '(none)'
@@ -799,7 +799,8 @@ class WorkLoop:
                 f"note_path: {config.get('note_path', '')}\n"
                 f"sources:\n{sources_str}\n"
                 f"research_context:\n{context}\n"
-                f"\nITEM_ID: {item_id}\n"
+                f"\nBACKLINK_TARGET: CONVERSATION\n"
+                f"ITEM_ID: {item_id}\n"
                 f"WORK_LOOP_DIR: {self.work_dir}\n"
                 f"ITEM_DIR: {item_dir}"
             )
@@ -1663,7 +1664,7 @@ class WorkLoop:
 
         if not self.child_research_prompt_file.exists():
             self._update_child_status(parent_id, child_name, 'needs-review')
-            print(f"[{_ts()}] {parent_id}/{child_name}: CHILD-RESEARCH-PROMPT.md not found — needs-review")
+            print(f"[{_ts()}] {parent_id}/{child_name}: UPDATE-RESEARCH-PROMPT.md not found — needs-review")
             return
 
         prompt_text = self.child_research_prompt_file.read_text()
@@ -1679,7 +1680,8 @@ class WorkLoop:
             f"sources:\n{sources_str}\n"
             f"research_context:\n{context}\n"
             f"run_id: {run_id}\n"
-            f"\nPARENT_ID: {parent_id}\n"
+            f"\nBACKLINK_TARGET: {parent_id}/CONVERSATION\n"
+            f"PARENT_ID: {parent_id}\n"
             f"PARENT_DIR: {parent_dir}\n"
             f"ITEM_ID: {child_name}\n"
             f"WORK_LOOP_DIR: {self.work_dir}\n"

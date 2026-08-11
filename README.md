@@ -2,7 +2,7 @@
 
 ## Overview
 
-Work-Loop is an automated harness that runs AI agents (Claude or OpenCode) on work items one at a time. Each item gets a fresh context, and items can run locally or be dispatched to remote hosts over SSH. The loop also supports **script items** — automated command dispatch to one or more machines with cron scheduling, multi-machine polling, and fan-in aggregation — **research items** — automated web research that fetches sources, compares against existing notes, and writes updated notes with per-run summaries — and **child research agents** — parent items can spawn and manage sub-agents via a propose/approve workflow for focused, parallel research.
+Work-Loop is an automated harness that runs AI agents (Claude or OpenCode) on work items one at a time. Each item gets a fresh context, and items can run locally or be dispatched to remote hosts over SSH. The loop also supports **script items** — automated command dispatch to one or more machines with cron scheduling, multi-machine polling, and fan-in aggregation — **research items** — automated web research that fetches sources, compares against existing notes, and writes updated notes with per-run summaries — **child research agents** — parent items can spawn and manage sub-agents via a propose/approve workflow for focused, parallel research — and **verified research** — de novo web research with multi-angle search, claim extraction with confidence ratings, contradiction resolution, and a human gate (available as a loop-dispatched item or as a sub-agent invoked by the LOOP-PROMPT agent).
 
 ## Quick Start
 
@@ -50,7 +50,10 @@ Work-Loop/                    ← scripts repo
 ├── LOOP-PROMPT.md            ← prompt for analyze/ready/resolved items
 ├── IMPL-PROMPT.md            ← prompt for implement items
 ├── RESOLVE-PROMPT.md         ← prompt for resolved items (summary)
-├── .claude/ or .opencode/    ← agent config (harness-dependent)
+├── UPDATE-RESEARCH-PROMPT.md ← prompt for research items (parent + child modes)
+├── VERIFIED-RESEARCH-PROMPT.md ← prompt for de novo verified research
+├── .opencode/                ← OpenCode agent config + sub-agent definitions
+│   └── agents/               ← sub-agent definitions (verified-research.md, etc.)
 └── <work_dir>/               ← work items (path configured in config.json)
     ├── WORK.md               ← main work item table
     └── <item-id>/            ← one folder per item
@@ -339,13 +342,25 @@ Five prompt files control agent behavior. They are injected automatically based 
 
 | File | Triggered By | Purpose |
 |---|---|---|
-| `LOOP-PROMPT.md` | `ready`, `analyze` | Multi-agent investigation with internal critic review + child agent management |
+| `LOOP-PROMPT.md` | `ready`, `analyze` | Multi-agent investigation with internal critic review + child agent management + verified-research sub-agent |
 | `IMPL-PROMPT.md` | `implement` | Code implementation with code review |
 | `RESOLVE-PROMPT.md` | `resolved` | Problem/resolution summary |
-| `RESEARCH-PROMPT.md` | `research` | Fetch sources, compare against note, write updated note and summary |
-| `CHILD-RESEARCH-PROMPT.md` | child research | Simplified research prompt for child agents (no WORK.md updates) |
+| `UPDATE-RESEARCH-PROMPT.md` | `research`, child research | Fetch sources, compare against note, write updated note and summary (unified for parent and child modes) |
+| `VERIFIED-RESEARCH-PROMPT.md` | sub-agent (via LOOP-PROMPT Step 7) | De novo web research with multi-angle search, claim verification, and human gate |
 
-Each prompt receives `ITEM_ID`, `WORK_LOOP_DIR`, and `ITEM_DIR` as variables. Research items also receive `topic`, `note_path`, `sources`, and `research_context`. Child research agents additionally receive `PARENT_ID` and `PARENT_DIR` to locate the parent's context and conversation.
+Each prompt receives `ITEM_ID`, `WORK_LOOP_DIR`, and `ITEM_DIR` as variables. Research items also receive `topic`, `note_path`, `sources`, `research_context`, and `BACKLINK_TARGET`. Child research agents additionally receive `PARENT_ID`, `PARENT_DIR`, and `run_id`. The consolidated `UPDATE-RESEARCH-PROMPT.md` handles both parent and child modes — child mode is detected by the presence of `PARENT_ID`.
+
+### Sub-Agents
+
+In addition to prompt-driven agents, the loop supports **sub-agents** that the LOOP-PROMPT agent can spawn during its work:
+
+| Sub-Agent | Purpose |
+|---|---|
+| `critic` | Reviews draft findings for unverified claims, inaccessible resources, and gaps |
+| `code-reviewer` | Reviews code changes for correctness, edge cases, and test coverage |
+| `verified-research` | Performs verified web research with multi-angle search, claim extraction, and confidence ratings (invoked on user request) |
+
+Sub-agent definitions live in `.opencode/agents/`.
 
 ## Loop Execution Order
 

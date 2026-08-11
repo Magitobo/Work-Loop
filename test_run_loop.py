@@ -2664,7 +2664,7 @@ class TestResearchScheduledItems(unittest.TestCase):
 class TestResearchFallbackPrompt(unittest.TestCase):
 
     def test_research_uses_loop_prompt_when_research_prompt_missing(self):
-        """When RESEARCH-PROMPT.md doesn't exist, process_local falls back to LOOP-PROMPT.md."""
+        """When UPDATE-RESEARCH-PROMPT.md doesn't exist, process_local falls back to LOOP-PROMPT.md."""
         content = (
             "# Work Loop\n\n"
             "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
@@ -2677,7 +2677,7 @@ class TestResearchFallbackPrompt(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         p = Path(tmp)
         (p / "WORK.md").write_text(content)
-        # No RESEARCH-PROMPT.md — only LOOP-PROMPT.md
+        # No UPDATE-RESEARCH-PROMPT.md — only LOOP-PROMPT.md
         (p / "LOOP-PROMPT.md").write_text("LOOP prompt content\n")
         (p / "_logs").mkdir(exist_ok=True)
 
@@ -2734,7 +2734,7 @@ def _make_parent_with_children(tmp_dir: str, parent_id: str, children: list[dict
     )
     (p / "WORK.md").write_text(work_md)
     (p / "LOOP-PROMPT.md").write_text("Do the work.\n")
-    (p / "CHILD-RESEARCH-PROMPT.md").write_text("Child research prompt.\n")
+    (p / "UPDATE-RESEARCH-PROMPT.md").write_text("Research prompt.\n")
     (p / "_logs").mkdir(exist_ok=True)
 
     parent_dir = p / parent_id
@@ -3030,7 +3030,7 @@ class TestProcessChild(unittest.TestCase):
                 "| -- | --------------------- | -------- | ------ | ------------ | ------ | --- |\n"
             )
             (p / "LOOP-PROMPT.md").write_text("Do the work.\n")
-            (p / "CHILD-RESEARCH-PROMPT.md").write_text("Child research prompt.\n")
+            (p / "UPDATE-RESEARCH-PROMPT.md").write_text("Research prompt.\n")
             (p / "_logs").mkdir(exist_ok=True)
             parent_dir = p / "PARENT-001"
             parent_dir.mkdir()
@@ -3219,21 +3219,23 @@ class TestChildCronPromotion(unittest.TestCase):
 
 class TestChildPromptExists(unittest.TestCase):
 
-    def test_child_prompt_file_exists(self):
-        prompt_path = _HERE / "CHILD-RESEARCH-PROMPT.md"
-        self.assertTrue(prompt_path.exists(), "CHILD-RESEARCH-PROMPT.md should exist")
+    def test_research_prompt_file_exists(self):
+        prompt_path = _HERE / "UPDATE-RESEARCH-PROMPT.md"
+        self.assertTrue(prompt_path.exists(), "UPDATE-RESEARCH-PROMPT.md should exist")
 
-    def test_child_prompt_has_no_step_6(self):
-        prompt_path = _HERE / "CHILD-RESEARCH-PROMPT.md"
+    def test_research_prompt_has_child_mode(self):
+        prompt_path = _HERE / "UPDATE-RESEARCH-PROMPT.md"
         content = prompt_path.read_text()
-        self.assertNotIn("Step 6", content)
-        self.assertNotIn("WORK-CHILDREN.md", content)
+        self.assertIn("Child mode", content)
+        self.assertIn("Parent mode", content)
+        self.assertIn("PARENT_ID", content)
+        self.assertIn("Do NOT modify any WORK-*.md file", content)
 
-    def test_child_prompt_has_parent_block(self):
-        prompt_path = _HERE / "CHILD-RESEARCH-PROMPT.md"
+    def test_research_prompt_has_parent_block(self):
+        prompt_path = _HERE / "UPDATE-RESEARCH-PROMPT.md"
         content = prompt_path.read_text()
         self.assertIn("PARENT_ID", content)
-        self.assertIn("PARENT_DIR", content)
+        self.assertIn("BACKLINK_TARGET", content)
 
     def test_loop_prompt_has_child_management_section(self):
         prompt_path = _HERE / "LOOP-PROMPT.md"
