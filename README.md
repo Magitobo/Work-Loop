@@ -51,7 +51,6 @@ Work-Loop/                    ← scripts repo
 ├── IMPL-PROMPT.md            ← prompt for implement items
 ├── RESOLVE-PROMPT.md         ← prompt for resolved items (summary)
 ├── UPDATE-RESEARCH-PROMPT.md ← prompt for research items (parent + child modes)
-├── VERIFIED-RESEARCH-PROMPT.md ← prompt for de novo verified research
 ├── .opencode/                ← OpenCode agent config + sub-agent definitions
 │   └── agents/               ← sub-agent definitions (verified-research.md, etc.)
 └── <work_dir>/               ← work items (path configured in config.json)
@@ -346,8 +345,6 @@ Five prompt files control agent behavior. They are injected automatically based 
 | `IMPL-PROMPT.md` | `implement` | Code implementation with code review |
 | `RESOLVE-PROMPT.md` | `resolved` | Problem/resolution summary |
 | `UPDATE-RESEARCH-PROMPT.md` | `research`, child research | Fetch sources, compare against note, write updated note and summary (unified for parent and child modes) |
-| `VERIFIED-RESEARCH-PROMPT.md` | sub-agent (via LOOP-PROMPT Step 7) | De novo web research with multi-angle search, claim verification, and human gate |
-
 Each prompt receives `ITEM_ID`, `WORK_LOOP_DIR`, and `ITEM_DIR` as variables. Research items also receive `topic`, `note_path`, `sources`, `research_context`, and `BACKLINK_TARGET`. Child research agents additionally receive `PARENT_ID`, `PARENT_DIR`, and `run_id`. The consolidated `UPDATE-RESEARCH-PROMPT.md` handles both parent and child modes — child mode is detected by the presence of `PARENT_ID`.
 
 ### Sub-Agents

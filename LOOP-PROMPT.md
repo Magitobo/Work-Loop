@@ -266,6 +266,7 @@ ITEM_DIR: {ITEM_DIR}
 Research question: {the user's question}
 Context: {any relevant context from the conversation or ITEM_DIR}
 Output note path: {where to write the synthesized note, if requested}
+BACKLINK_TARGET: {ITEM_ID}/CONVERSATION
 
 Perform all 6 phases: Query Expansion, Source Fetch + Rate, Extract + Rate Claims,
 Synthesize, Coverage Check, and return structured output.
