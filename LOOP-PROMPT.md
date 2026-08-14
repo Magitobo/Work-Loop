@@ -138,8 +138,10 @@ replace with `[concise title]({ITEM_ID}/CONVERSATION.md)`.
 
 ## Step 6 — Managing Child Agents
 
-You can manage child research agents. Child agents are sub-agents that run focused research
-cycles on your behalf. They write results to shared `context/` files and `children/*/runs/*/research.md`.
+You can manage child agents. Two types are available:
+
+- **`type: research`** — fetches web sources, compares against an existing note, writes updates. Outputs to `runs/*/research.md`.
+- **`type: task`** — scans local files/directories, proposes actions (moves, renames, etc.), does NOT execute. Outputs to `runs/*/task.md`.
 
 ### Reading Child Agent Status
 
@@ -155,42 +157,72 @@ Read `{ITEM_DIR}/WORK-CHILDREN.md` to see your current child agents and their st
 
 Child run summaries are in each child's `children/{name}/RUNS.md` run history table.
 
-### Creating a Child Agent (Requires Your Approval)
+### Creating a Child Research Agent (Requires Your Approval)
 
 When you identify a research gap, propose a new child agent:
 
 ```
 ### Proposals
 
-#### Create child agent: `{name}` — {topic}
+#### Create child agent: `{name}` — {title}
 
 **RUNS.md to create at `children/{name}/RUNS.md`:**
 \`\`\`markdown
 ## Config
 type: research
 parent: {ITEM_ID}
-topic: {topic}
+title: {title}
 note_path: ../context/{output-file}.md
 sources:
   {url1}
   {url2}
 schedule: {cron}
 
-## Research Context
+## Prompt
 {research context instructions}
 \`\`\`
 
 **WORK-CHILDREN.md row to add:**
-| {name} | [{topic}](children/{name}/RUNS.md) | ready |  |  |  |
+| {name} | [{title}](children/{name}/RUNS.md) | ready |  |  |  |
 
 **Questions:** Should I create this child agent?
 ```
 
 After your approval, create the child folder, RUNS.md, and add the row to WORK-CHILDREN.md.
 
+### Creating a Child Task Agent (Requires Your Approval)
+
+For recurring vault maintenance, file organization, or other local tasks:
+
+```
+### Proposals
+
+#### Create child agent: `{name}` — {title}
+
+**RUNS.md to create at `children/{name}/RUNS.md`:**
+\`\`\`markdown
+## Config
+type: task
+parent: {ITEM_ID}
+title: {title}
+note_path: ../context/{suggestions-file}.md
+schedule: {cron}
+
+## Prompt
+{detailed instructions: what to scan, criteria for proposals}
+\`\`\`
+
+**WORK-CHILDREN.md row to add:**
+| {name} | [{title}](children/{name}/RUNS.md) | ready |  |  |  |
+
+**Questions:** Should I create this child agent?
+```
+
+Task agents scan files and propose actions but do NOT execute them. You review their suggestions in CONVERSATION.md and approve.
+
 ### Updating a Child Agent (Requires Your Approval)
 
-To change a child's sources, topic, note_path, or schedule type:
+To change a child's sources, title, note_path, or schedule type:
 
 ```
 ### Proposals
@@ -239,6 +271,7 @@ Synthesize child run results in your CONVERSATION.md findings:
 
 **areas** (success): Updated area-walkability.md with 3 new neighborhoods.
 **rules** (needs-review): MM2H rules updated but source failed — needs verification.
+**inbox** (needs-review): Proposed 5 file moves for inbox cleanup — awaiting approval.
 ```
 
 ### Important Rules

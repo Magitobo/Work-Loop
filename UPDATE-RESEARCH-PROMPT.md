@@ -24,12 +24,12 @@ If PARENT_ID is set, you are operating as a **child agent** (see child-mode inst
 1. Read `{ITEM_DIR}/CONVERSATION.md` for prior research thread (newest first — read bottom-up for history).
 2. Read `{ITEM_DIR}/background.md` for internal context (if present).
 3. Read `{ITEM_DIR}/context/` for additional context (if present).
-4. Read the research config from `{ITEM_DIR}/RUNS.md` — extract sources, note_path, and Research Context.
+4. Read the research config from `{ITEM_DIR}/RUNS.md` — extract sources, note_path, and `## Prompt`.
 5. Read the existing note at the target path (resolve the wiki link to a file path).
 6. Read prior run summaries from `{ITEM_DIR}/runs/` (newest first) for context on what was already found.
 
 **Child mode** (PARENT_ID is set):
-1. Read `{ITEM_DIR}/RUNS.md` — extract topic, sources, note_path, and `## Research Context`.
+1. Read `{ITEM_DIR}/RUNS.md` — extract title, sources, note_path, and `## Prompt`.
 2. Read the existing note at `note_path` (resolve the relative path from `{ITEM_DIR}`).
 3. Read prior run summaries from `{ITEM_DIR}/runs/` (newest first) for context on what was already found.
 

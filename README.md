@@ -2,7 +2,7 @@
 
 ## Overview
 
-Work-Loop is an automated harness that runs AI agents (Claude or OpenCode) on work items one at a time. Each item gets a fresh context, and items can run locally or be dispatched to remote hosts over SSH. The loop also supports **script items** — automated command dispatch to one or more machines with cron scheduling, multi-machine polling, and fan-in aggregation — **research items** — automated web research that fetches sources, compares against existing notes, and writes updated notes with per-run summaries — **child research agents** — parent items can spawn and manage sub-agents via a propose/approve workflow for focused, parallel research — and **verified research** — de novo web research with multi-angle search, claim extraction with confidence ratings, contradiction resolution, and a human gate (available as a loop-dispatched item or as a sub-agent invoked by the LOOP-PROMPT agent).
+Work-Loop is an automated harness that runs AI agents (Claude or OpenCode) on work items one at a time. Each item gets a fresh context, and items can run locally or be dispatched to remote hosts over SSH. The loop also supports **script items** — automated command dispatch to one or more machines with cron scheduling, multi-machine polling, and fan-in aggregation — **research items** — automated web research that fetches sources, compares against existing notes, and writes updated notes with per-run summaries — **child research agents** — parent items can spawn and manage sub-agents via a propose/approve workflow for focused, parallel research — and **verified research** — de novo web research with multi-angle search, claim extraction with confidence ratings, contradiction resolution, and a human gate (available as a sub-agent invoked by the LOOP-PROMPT agent).
 
 ## Quick Start
 
@@ -101,9 +101,13 @@ new → ready/analyze/implement/resolved → in-progress → needs-review
 | `abort` | Set by human to cancel: skips un-started items; kills running harness |
 | `done` | Human marks complete; loop moves row to Done section |
 
-## Child Research Agents
+## Child Agents
 
-Parent items can spawn and manage child research agents — sub-agents that run focused research cycles and write results to the parent's shared `context/` directory. Children are managed through a **propose/approve** workflow: the parent agent proposes structural changes, the user approves, and the loop executes.
+Parent items can spawn and manage child agents — sub-agents that run focused cycles and write results to the parent's shared `context/` directory. Children are managed through a **propose/approve** workflow: the parent agent proposes structural changes, the user approves, and the loop executes.
+
+Two child types are available:
+- **`type: research`** — fetches web sources, compares against a note, writes updates
+- **`type: task`** — scans local files/directories, proposes actions (moves, renames), does NOT execute
 
 ### Registry: WORK-CHILDREN.md
 
@@ -155,7 +159,7 @@ The parent agent manages children through two tiers of actions:
 
 **High-risk (requires user approval):**
 - Create a new child agent
-- Update a child's config (sources, note_path, topic, schedule type)
+- Update a child's config (sources, note_path, title, schedule type)
 - Delete a child agent
 
 The parent writes a proposal to `CONVERSATION.md` with the `RUNS.md` config to create/modify and the `WORK-CHILDREN.md` row to add. After user approval, the parent executes.
@@ -167,27 +171,42 @@ The parent writes a proposal to `CONVERSATION.md` with the `RUNS.md` config to c
 
 The parent updates the child's status in `WORK-CHILDREN.md` directly and logs the action in `CONVERSATION.md`.
 
-### Child Run Config
-
-Child agents use `RUNS.md` (same format as top-level research items) with an additional `parent:` key:
+### Research Child Config
 
 ```markdown
 ## Config
 type: research
 parent: {ITEM_ID}
-topic: Neighborhood walkability analysis
+title: Neighborhood walkability analysis
 note_path: ../context/area-walkability.md
 sources:
   https://www.walkscore.com/score/Kuala-Lumpur
 schedule: 0 */6 * * *
 
-## Research Context
+## Prompt
 Evaluate walkability for top 5 KL neighborhoods.
+```
+
+### Task Child Config
+
+```markdown
+## Config
+type: task
+parent: {ITEM_ID}
+title: Inbox cleanup
+note_path: ../context/inbox-suggestions.md
+schedule: 0 8 * * *
+
+## Prompt
+Scan the 00 Inbox folder. Suggest which folder each file should move to:
+- Business → 01-Work
+- Personal → 02-Personal
+- Notes → 03-Notes
 ```
 
 - `parent: {ITEM_ID}` — required; links the child to its parent for discovery and orphan detection
 - `note_path` — relative to the child's `children/{name}/` directory; typically `../context/...` to write to the parent's shared context
-- Children write results to `runs/{run_id}/research.md`
+- Research children write results to `runs/{run_id}/research.md`; task children to `runs/{run_id}/task.md`
 - Children must have unique `note_path` values; the loop enforces this at process time
 
 ## Script Items
@@ -242,7 +261,7 @@ Add a `## Config` section to `RUNS.md`:
 ```markdown
 ## Config
 type: research
-topic: AI Security
+title: AI Security
 note_path: [[AI Security]]
 sources:
   https://arxiv.org/list/cs.CR/recent
@@ -250,7 +269,7 @@ sources:
 schedule: 0 6 * * 1        # optional cron expression
 timeout: 10                # optional: minutes before agent times out (default: 4)
 
-## Research Context
+## Prompt
 Focus on: model vulnerabilities, alignment failures, supply chain risks
 Exclude: consumer AI apps, chatbot features
 Key papers to watch: [[AI Security/Papers]]
@@ -259,13 +278,13 @@ Key papers to watch: [[AI Security/Papers]]
 | Field | Required | Description |
 |---|---|---|
 | `type` | Yes | Must be `research` |
-| `topic` | Yes | Human-readable topic name |
+| `title` | Yes | Human-readable title |
 | `note_path` | Yes | Obsidian wiki link to the target note |
 | `sources` | Yes | One or more URLs to fetch (indented list) |
 | `schedule` | No | Cron expression; if present, status starts as `scheduled` |
 | `timeout` | No | Minutes before agent times out (default: 4) |
 
-Everything after `## Research Context` (until the next `##` header or EOF) is injected verbatim into the agent prompt as scope and guidance.
+Everything after `## Prompt` (until the next `##` header or EOF) is injected verbatim into the agent prompt as scope and guidance.
 
 ### Research Item States
 
@@ -337,7 +356,7 @@ python3 -m pytest test_run_loop.py -v
 
 ## Prompt Files
 
-Five prompt files control agent behavior. They are injected automatically based on the item's status:
+Four prompt files control agent behavior. They are injected automatically based on the item's status:
 
 | File | Triggered By | Purpose |
 |---|---|---|

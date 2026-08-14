@@ -2347,7 +2347,7 @@ class TestRemoteAbort(unittest.TestCase):
 _RESEARCH_RUNS_MD = """\
 ## Config
 type: research
-topic: AI Security
+title: AI Security
 note_path: [[AI Security]]
 sources:
   https://arxiv.org/list/cs.CR/recent
@@ -2355,7 +2355,7 @@ sources:
 schedule: 0 6 * * 1
 timeout: 10
 
-## Research Context
+## Prompt
 Focus on: model vulnerabilities, alignment failures, supply chain risks
 Exclude: consumer AI apps, chatbot features
 Key papers to watch: [[AI Security/Papers]]
@@ -2416,33 +2416,33 @@ class TestResearchParseConfig(unittest.TestCase):
         wl = _make_research_item(tempfile.mkdtemp(), "RES-001", _RESEARCH_RUNS_MD)
         cfg = wl._parse_runs_md("RES-001")
         self.assertEqual(cfg["type"], "research")
-        self.assertEqual(cfg["topic"], "AI Security")
+        self.assertEqual(cfg["title"], "AI Security")
         self.assertEqual(cfg["note_path"], "[[AI Security]]")
         self.assertIn("https://arxiv.org/list/cs.CR/recent", cfg["sources"])
         self.assertIn("https://openai.com/blog", cfg["sources"])
         self.assertEqual(cfg["schedule"], "0 6 * * 1")
         self.assertEqual(cfg["timeout"], 10)
-        self.assertIn("model vulnerabilities", cfg["research_context"])
-        self.assertIn("Exclude: consumer AI apps", cfg["research_context"])
+        self.assertIn("model vulnerabilities", cfg["instruction"])
+        self.assertIn("Exclude: consumer AI apps", cfg["instruction"])
 
-    def test_research_context_parsed(self):
+    def test_prompt_parsed(self):
         wl = _make_research_item(tempfile.mkdtemp(), "RES-001", _RESEARCH_RUNS_MD)
         cfg = wl._parse_runs_md("RES-001")
-        self.assertIn("Focus on: model vulnerabilities", cfg["research_context"])
-        self.assertIn("Key papers to watch", cfg["research_context"])
+        self.assertIn("Focus on: model vulnerabilities", cfg["instruction"])
+        self.assertIn("Key papers to watch", cfg["instruction"])
 
-    def test_missing_research_context_returns_empty(self):
+    def test_missing_prompt_returns_empty(self):
         runs_md = """\
 ## Config
 type: research
-topic: Test
+title: Test
 note_path: [[Test]]
 sources:
   https://example.com
 """
         wl = _make_research_item(tempfile.mkdtemp(), "RES-001", runs_md)
         cfg = wl._parse_runs_md("RES-001")
-        self.assertEqual(cfg["research_context"], "")
+        self.assertEqual(cfg["instruction"], "")
 
 
 class TestResearchInitialization(unittest.TestCase):
@@ -2464,7 +2464,7 @@ class TestResearchInitialization(unittest.TestCase):
         runs_md = """\
 ## Config
 type: research
-topic: Test Topic
+title: Test Topic
 note_path: [[Test]]
 sources:
   https://example.com
@@ -2577,7 +2577,7 @@ class TestResearchProcessLocal(unittest.TestCase):
         runs_md = """\
 ## Config
 type: research
-topic: Test
+title: Test
 note_path: [[Test]]
 sources:
   https://example.com
@@ -2700,9 +2700,9 @@ class TestResearchFallbackPrompt(unittest.TestCase):
             wl.process_local("RES-001", 10.0)
 
         self.assertIn("LOOP prompt content", captured_prompt)
-        self.assertIn("topic:", captured_prompt)
+        self.assertIn("title:", captured_prompt)
         self.assertIn("sources:", captured_prompt)
-        self.assertIn("research_context:", captured_prompt)
+        self.assertIn("instruction:", captured_prompt)
 
 
 # ---------------------------------------------------------------------------
@@ -2749,12 +2749,12 @@ def _make_parent_with_children(tmp_dir: str, parent_id: str, children: list[dict
         "|---|---|---|---|---|---|",
     ]
     for ch in children:
-        topic = ch.get('runs_md', '').split('\n')
-        topic_line = next((l for l in topic if l.startswith('topic:')), ch['name'])
-        topic_val = topic_line.split(':', 1)[1].strip() if ':' in topic_line else ch['name']
+        title = ch.get('runs_md', '').split('\n')
+        title_line = next((l for l in title if l.startswith('title:')), ch['name'])
+        title_val = title_line.split(':', 1)[1].strip() if ':' in title_line else ch['name']
         budget = ch.get('budget', '')
         children_lines.append(
-            f"| {ch['name']} | [{topic_val}](children/{ch['name']}/RUNS.md) | {ch['status']} |  | {budget} |  |"
+            f"| {ch['name']} | [{title_val}](children/{ch['name']}/RUNS.md) | {ch['status']} |  | {budget} |  |"
         )
     children_lines.append("")
     (parent_dir / "WORK-CHILDREN.md").write_text('\n'.join(children_lines))
@@ -2775,13 +2775,13 @@ _CHILD_RUNS_MD = """\
 ## Config
 type: research
 parent: PARENT-001
-topic: Area walkability
+title: Area walkability
 note_path: ../context/area-walkability.md
 sources:
   https://www.walkscore.com
 schedule: 0 */6 * * *
 
-## Research Context
+## Prompt
 Evaluate walkability for KL neighborhoods.
 
 ## Run History
@@ -2802,11 +2802,11 @@ class TestParseChildRunsMd(unittest.TestCase):
             config = wl._parse_child_runs_md(child_path)
             self.assertEqual(config["type"], "research")
             self.assertEqual(config["parent"], "PARENT-001")
-            self.assertEqual(config["topic"], "Area walkability")
+            self.assertEqual(config["title"], "Area walkability")
             self.assertEqual(config["note_path"], "../context/area-walkability.md")
             self.assertIn("https://www.walkscore.com", config["sources"])
             self.assertEqual(config["schedule"], "0 */6 * * *")
-            self.assertIn("walkability", config["research_context"])
+            self.assertIn("walkability", config["instruction"])
 
     def test_missing_runs_md_returns_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -3241,6 +3241,105 @@ class TestChildPromptExists(unittest.TestCase):
         prompt_path = _HERE / "LOOP-PROMPT.md"
         content = prompt_path.read_text()
         self.assertIn("Managing Child Agents", content)
+
+
+_CHILD_TASK_RUNS_MD = """\
+## Config
+type: task
+parent: PARENT-001
+title: Inbox cleanup
+note_path: ../context/inbox-suggestions.md
+schedule: 0 8 * * *
+
+## Prompt
+Scan the 00 Inbox folder. Suggest folder moves.
+
+## Run History
+
+| ID | Summary | Status | Last Updated | Log |
+|---|---|---|---|---|
+"""
+
+
+class TestTaskChildType(unittest.TestCase):
+
+    def test_task_prompt_file_exists(self):
+        prompt_path = _HERE / "TASK-PROMPT.md"
+        self.assertTrue(prompt_path.exists(), "TASK-PROMPT.md should exist")
+
+    def test_task_prompt_propose_only(self):
+        prompt_path = _HERE / "TASK-PROMPT.md"
+        content = prompt_path.read_text()
+        self.assertIn("propose", content.lower())
+        self.assertIn("do NOT", content)
+
+    def test_task_child_parsed_correctly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = _make_parent_with_children(tmp, "PARENT-001", [
+                {"name": "inbox", "status": "ready", "runs_md": _CHILD_TASK_RUNS_MD}
+            ])
+            child_path = Path(tmp) / "PARENT-001" / "children" / "inbox" / "RUNS.md"
+            config = wl._parse_child_runs_md(child_path)
+            self.assertEqual(config["type"], "task")
+            self.assertEqual(config["title"], "Inbox cleanup")
+            self.assertIn("00 Inbox", config["instruction"])
+
+    def test_task_child_success_sets_done(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = _make_parent_with_children(tmp, "PARENT-001", [
+                {"name": "inbox", "status": "ready", "runs_md": _CHILD_TASK_RUNS_MD.replace("schedule: 0 8 * * *", "")}
+            ])
+            # Ensure TASK-PROMPT.md exists at script_dir for this test
+            task_prompt = Path(tmp) / "TASK-PROMPT.md"
+            task_prompt.write_text("Task prompt.\n")
+            item_dir = Path(tmp) / "PARENT-001" / "children" / "inbox"
+            run_dir = item_dir / "runs" / "20260813-001"
+            run_dir.mkdir(parents=True)
+            (run_dir / "task.md").write_text("## 2026-08-13 — Inbox cleanup\n\n- Proposed 3 file moves\n")
+            with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=0):
+                wl.process_child("PARENT-001", "inbox")
+            wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
+            status = wl._get_child_status(wc_path, "inbox")
+            self.assertEqual(status, "done")
+
+    def test_task_child_success_with_schedule_sets_scheduled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = _make_parent_with_children(tmp, "PARENT-001", [
+                {"name": "inbox", "status": "ready", "runs_md": _CHILD_TASK_RUNS_MD}
+            ])
+            task_prompt = Path(tmp) / "TASK-PROMPT.md"
+            task_prompt.write_text("Task prompt.\n")
+            item_dir = Path(tmp) / "PARENT-001" / "children" / "inbox"
+            run_dir = item_dir / "runs" / "20260813-001"
+            run_dir.mkdir(parents=True)
+            (run_dir / "task.md").write_text("## 2026-08-13 — Inbox cleanup\n\n- Proposed 3 file moves\n")
+            with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=0):
+                wl.process_child("PARENT-001", "inbox")
+            wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
+            status = wl._get_child_status(wc_path, "inbox")
+            self.assertEqual(status, "scheduled")
+
+    def test_unknown_type_sets_needs_review(self):
+        bad_runs = _CHILD_TASK_RUNS_MD.replace("type: task", "type: unknown")
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = _make_parent_with_children(tmp, "PARENT-001", [
+                {"name": "bad", "status": "ready", "runs_md": bad_runs}
+            ])
+            wl.process_child("PARENT-001", "bad")
+            wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
+            status = wl._get_child_status(wc_path, "bad")
+            self.assertEqual(status, "needs-review")
+
+    def test_task_prompt_missing_sets_needs_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = _make_parent_with_children(tmp, "PARENT-001", [
+                {"name": "inbox", "status": "ready", "runs_md": _CHILD_TASK_RUNS_MD}
+            ])
+            # Don't create TASK-PROMPT.md
+            wl.process_child("PARENT-001", "inbox")
+            wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
+            status = wl._get_child_status(wc_path, "inbox")
+            self.assertEqual(status, "needs-review")
 
 
 if __name__ == "__main__":

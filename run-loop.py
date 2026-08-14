@@ -523,9 +523,9 @@ class WorkLoop:
 
         conv_file = item_dir / "CONVERSATION.md"
         if not conv_file.exists():
-            topic = config.get('topic', item_id)
+            title = config.get('title', item_id)
             today = datetime.now().strftime('%Y-%m-%d')
-            conv_file.write_text(f"## {today} | User\n\nResearch item: {topic}\n")
+            conv_file.write_text(f"## {today} | User\n\nResearch item: {title}\n")
 
         initial_status = 'scheduled' if config.get('schedule') else 'ready'
         self.update_col(item_id, COL_STATUS, initial_status)
@@ -790,15 +790,15 @@ class WorkLoop:
 
             sources = config.get('sources', [])
             sources_str = '\n'.join(f'- {s.strip()}' for s in sources) if sources else '(none)'
-            context = config.get('research_context', '')
+            instruction = config.get('instruction', '')
 
             item_dir = str(self.work_dir / item_id)
             prompt = (
                 f"{prompt_text}\n\n"
-                f"topic: {config.get('topic', '')}\n"
+                f"title: {config.get('title', '')}\n"
                 f"note_path: {config.get('note_path', '')}\n"
                 f"sources:\n{sources_str}\n"
-                f"research_context:\n{context}\n"
+                f"instruction:\n{instruction}\n"
                 f"\nBACKLINK_TARGET: CONVERSATION\n"
                 f"ITEM_ID: {item_id}\n"
                 f"WORK_LOOP_DIR: {self.work_dir}\n"
@@ -1165,7 +1165,7 @@ class WorkLoop:
             'location': '', 'locations': [],
             'heartbeat_file': '', 'timeout': DEFAULT_TIMEOUT_MIN,
             'aggregation_script': '', 'analysis_prompt': '',
-            'type': '', 'topic': '', 'note_path': '', 'sources': [],
+            'type': '', 'title': '', 'note_path': '', 'sources': [],
             'parent': '',
         }
         m = re.search(r'^## Config\s*\n(.*?)(?=^##|\Z)', text, re.MULTILINE | re.DOTALL)
@@ -1221,8 +1221,8 @@ class WorkLoop:
                 config['analysis_prompt'] = val
             elif key_n == 'type':
                 config['type'] = val
-            elif key_n == 'topic':
-                config['topic'] = val
+            elif key_n == 'title':
+                config['title'] = val
             elif key_n == 'note_path':
                 config['note_path'] = val
             elif key_n == 'parent':
@@ -1230,15 +1230,15 @@ class WorkLoop:
         return config
 
     def _parse_runs_md(self, item_id: str) -> dict:
-        """Parse RUNS.md — returns config dict with 'research_context' key."""
+        """Parse RUNS.md — returns config dict with 'instruction' key."""
         runs_file = self.work_dir / item_id / "RUNS.md"
         if not runs_file.exists():
             return self._empty_config()
         text = runs_file.read_text()
         config = self._parse_config_block(text)
-        # Parse Research Context block
-        m = re.search(r'^## Research Context\s*\n(.*?)(?=^##|\Z)', text, re.MULTILINE | re.DOTALL)
-        config['research_context'] = m.group(1).strip() if m else ''
+        # Parse Prompt block
+        m = re.search(r'^## Prompt\s*\n(.*?)(?=^##|\Z)', text, re.MULTILINE | re.DOTALL)
+        config['instruction'] = m.group(1).strip() if m else ''
         return config
 
     _parse_runs_md_config = _parse_runs_md  # alias for script item processing
@@ -1250,8 +1250,8 @@ class WorkLoop:
             'location': '', 'locations': [],
             'heartbeat_file': '', 'timeout': DEFAULT_TIMEOUT_MIN,
             'aggregation_script': '', 'analysis_prompt': '',
-            'type': '', 'topic': '', 'note_path': '', 'sources': [],
-            'parent': '', 'research_context': '',
+            'type': '', 'title': '', 'note_path': '', 'sources': [],
+            'parent': '', 'instruction': '',
         }
 
     def _cron_should_run(self, cron_str: str, now: datetime) -> bool:
@@ -1434,8 +1434,8 @@ class WorkLoop:
             return self._empty_config()
         text = child_path.read_text()
         config = self._parse_config_block(text)
-        m = re.search(r'^## Research Context\s*\n(.*?)(?=^##|\Z)', text, re.MULTILINE | re.DOTALL)
-        config['research_context'] = m.group(1).strip() if m else ''
+        m = re.search(r'^## Prompt\s*\n(.*?)(?=^##|\Z)', text, re.MULTILINE | re.DOTALL)
+        config['instruction'] = m.group(1).strip() if m else ''
         return config
 
     def _get_all_item_ids(self) -> list[str]:
@@ -1626,8 +1626,8 @@ class WorkLoop:
                 found = False
                 for child_name, _, cfg in children:
                     if child_name == cname:
-                        topic = cfg.get('topic', child_name)
-                        cols[CH_TITLE] = f" [{topic}](children/{child_name}/RUNS.md) "
+                        title = cfg.get('title', child_name)
+                        cols[CH_TITLE] = f" [{title}](children/{child_name}/RUNS.md) "
                         line = '|'.join(cols) + '\n'
                         found = True
                         break
@@ -1643,13 +1643,31 @@ class WorkLoop:
         work_children_path.write_text(''.join(new_lines))
 
     def process_child(self, parent_id: str, child_name: str) -> None:
-        """Process a child research agent. Does NOT touch top-level WORK.md."""
+        """Process a child agent (research or task). Does NOT touch top-level WORK.md."""
         child_dir = self.work_dir / parent_id / "children" / child_name
         runs_path = child_dir / "RUNS.md"
         config = self._parse_child_runs_md(runs_path)
+        child_type = config.get('type', 'research')
         budget = self._get_child_budget(parent_id, child_name)
         today = datetime.now().strftime('%Y-%m-%d')
         ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+
+        # Determine prompt file and validation
+        if child_type == 'research':
+            prompt_file = self.child_research_prompt_file
+            summary_file = 'research.md'
+        elif child_type == 'task':
+            prompt_file = self.script_dir / "TASK-PROMPT.md"
+            summary_file = 'task.md'
+        else:
+            self._update_child_status(parent_id, child_name, 'needs-review')
+            print(f"[{_ts()}] {parent_id}/{child_name}: unknown type '{child_type}' — needs-review")
+            return
+
+        if not prompt_file.exists():
+            self._update_child_status(parent_id, child_name, 'needs-review')
+            print(f"[{_ts()}] {parent_id}/{child_name}: {prompt_file.name} not found — needs-review")
+            return
 
         is_unique, conflict = self._validate_note_path_uniqueness(parent_id, child_name)
         if not is_unique:
@@ -1662,23 +1680,18 @@ class WorkLoop:
         run_dir.mkdir(parents=True, exist_ok=True)
         self._update_child_status(parent_id, child_name, 'running')
 
-        if not self.child_research_prompt_file.exists():
-            self._update_child_status(parent_id, child_name, 'needs-review')
-            print(f"[{_ts()}] {parent_id}/{child_name}: UPDATE-RESEARCH-PROMPT.md not found — needs-review")
-            return
-
-        prompt_text = self.child_research_prompt_file.read_text()
+        prompt_text = prompt_file.read_text()
         sources = config.get('sources', [])
         sources_str = '\n'.join(f'- {s.strip()}' for s in sources) if sources else '(none)'
-        context = config.get('research_context', '')
+        instruction = config.get('instruction', '')
         parent_dir = str(self.work_dir / parent_id)
         item_dir = str(child_dir)
         prompt = (
             f"{prompt_text}\n\n"
-            f"topic: {config.get('topic', '')}\n"
+            f"title: {config.get('title', '')}\n"
             f"note_path: {config.get('note_path', '')}\n"
             f"sources:\n{sources_str}\n"
-            f"research_context:\n{context}\n"
+            f"instruction:\n{instruction}\n"
             f"run_id: {run_id}\n"
             f"\nBACKLINK_TARGET: {parent_id}/CONVERSATION\n"
             f"PARENT_ID: {parent_id}\n"
@@ -1693,7 +1706,7 @@ class WorkLoop:
         logs_dir.mkdir(parents=True, exist_ok=True)
         log_file = logs_dir / f"{ts}_{parent_id}_{child_name}.log"
         log_link = f"[Log]({parent_id}/_logs/{ts}_{parent_id}_{child_name}.debug)"
-        print(f"[{_ts()}] Processing child: {parent_id}/{child_name} (budget: ${budget}, run_id: {run_id})")
+        print(f"[{_ts()}] Processing child: {parent_id}/{child_name} (type: {child_type}, budget: ${budget}, run_id: {run_id})")
 
         exit_code = self._run_harness(prompt, log_file, budget, cwd=cwd, item_id=f"{parent_id}/{child_name}")
 
@@ -1719,20 +1732,20 @@ class WorkLoop:
             print(f"[{_ts()}] {parent_id}/{child_name}: {cause} — needs-review")
         else:
             self._update_child_budget(parent_id, child_name, f"${budget}")
-            summary = "Research complete"
-            research_file = run_dir / "research.md"
-            if research_file.exists():
-                rlines = research_file.read_text().split('\n')
+            summary = f"{child_type.capitalize()} complete"
+            summary_path = run_dir / summary_file
+            if summary_path.exists():
+                rlines = summary_path.read_text().split('\n')
                 if len(rlines) > 1:
                     summary = rlines[1].strip('# -').strip()
             self._append_research_run(child_name, run_id, summary, runs_path=runs_path)
 
             if config.get('schedule'):
                 self._update_child_status(parent_id, child_name, 'scheduled')
-                print(f"[{_ts()}] {parent_id}/{child_name}: research complete — scheduled")
+                print(f"[{_ts()}] {parent_id}/{child_name}: {child_type} complete — scheduled")
             else:
                 self._update_child_status(parent_id, child_name, 'done')
-                print(f"[{_ts()}] {parent_id}/{child_name}: research complete — done")
+                print(f"[{_ts()}] {parent_id}/{child_name}: {child_type} complete — done")
 
     def resume_running_children(self) -> None:
         """On startup, find running children and handle orphan recovery."""
