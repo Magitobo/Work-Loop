@@ -30,7 +30,7 @@ If PARENT_ID is set, you are operating as a **child agent** (see child-mode inst
 
 **Child mode** (PARENT_ID is set):
 1. Read `{ITEM_DIR}/RUNS.md` — extract title, sources, note_path, and `## Prompt`.
-2. Read the existing note at `note_path` (resolve the relative path from `{ITEM_DIR}`).
+2. Read the existing note at `note_path` (resolve the relative path from `{PARENT_DIR}/children`).
 3. Read prior run summaries from `{ITEM_DIR}/runs/` (newest first) for context on what was already found.
 
 ## Step 2 — Fetch Sources
@@ -58,6 +58,15 @@ Overwrite the note at `note_path` with the updated content:
 - Add a `## Recent Updates` section at the top with the date and a brief summary
 - Use wiki links `[[filename]]` for all cross-references
 - Keep it concise — bullet points, not essays
+
+**Child mode only (PARENT_ID set) — attention marker (required, first line of the note):**
+The loop reads a single HTML comment at the very top of the note to decide whether to
+surface it in the parent's WORK.md `## Needs Attention` section. It is invisible in
+Obsidian. Write exactly one of:
+- `<!-- attention: yes — {one-line reason} -->` — when the run found something needing the
+  user's attention (e.g. a source failed to load, a claim needs verification, or a gap
+  requires a decision).
+- `<!-- attention: no -->` — otherwise.
 
 ## Step 5 — Write Research Summary
 

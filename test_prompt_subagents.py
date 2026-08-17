@@ -107,6 +107,7 @@ _PROMPT_FILES = [
     "IMPL-PROMPT.md",
     "RESOLVE-PROMPT.md",
     "UPDATE-RESEARCH-PROMPT.md",
+    "TASK-PROMPT.md",
 ]
 
 

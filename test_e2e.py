@@ -9,9 +9,10 @@ from the repo, and runs the real harness.  JSON logs are parsed to verify that
 the expected tool calls were emitted (e.g. critic subagent spawn, file writes).
 
 Run directly:
-  PYTEST_E2E=1 python3 -m pytest test_e2e.py -v
+  ENABLE_E2E_TESTS=1 pytest test_e2e.py -v
 
-Or let conftest.py dispatch in background after the main suite."""
+Or enable background dispatch after the unit test suite:
+  ENABLE_BACKGROUND_E2E=1 pytest"""
 
 import importlib.util
 import json
@@ -78,11 +79,21 @@ def _make_e2e_workspace(
     item_dir.mkdir(parents=True)
     (item_dir / "CONVERSATION.md").write_text(conversation_md)
 
+    # Read harness model from config.json (single source of truth)
+    model = "llama-swap/llama/Qwen3.8-27B-Q6_K"
+    config_path = REPO_DIR / "config.json"
+    if config_path.exists():
+        try:
+            with open(config_path) as f:
+                model = json.load(f).get("harness", {}).get("model", model)
+        except Exception:
+            pass
+
     cfg = {
         "work_dir": tmp,
         "harness": {
             "type": "opencode",
-            "model": "llama-swap/llama/Qwen3.6-27B-UD-Q6_K_XL",
+            "model": model,
             "max_budget_usd": 10.00,
         },
         "remote": {"work_dir": "~/Work-Loop"},

@@ -17,6 +17,8 @@ MyNotebook/
 │   ├── LOOP-PROMPT.md      ← prompt for analyze/ready/resolved items
 │   ├── IMPL-PROMPT.md      ← prompt for implement items
 │   ├── RESOLVE-PROMPT.md   ← prompt for resolved items
+│   ├── UPDATE-RESEARCH-PROMPT.md ← prompt for research items + child research
+│   ├── TASK-PROMPT.md      ← prompt for child task agents
 │   ├── LOOP-PROMPT-v1.0.md ← legacy prompt
 │   └── .claude/ or .opencode/  ← agent config (harness-dependent)
 │       └── agents/         ← subagent definitions (critic.md, code-reviewer.md)
@@ -24,11 +26,16 @@ MyNotebook/
     ├── WORK.md             ← main work item table
     └── <item-id>/          ← one folder per work item
         ├── CONVERSATION.md ← thread between user and agent
+        ├── WORK-CHILDREN.md← (optional) child agent registry table
         ├── _logs/          ← harness logs
-        ├── RUNS.md         ← (script items only) run history + config
+        ├── children/       ← (optional) one folder per child agent
+        │   └── <child>/
+        │       ├── RUNS.md ← child config (type, parent, note_path, …)
+        │       └── runs/   ← per-run summaries (research.md / task.md)
+        ├── RUNS.md         ← (script/research items) run history + config
         ├── background.md   ← (optional) internal context
-        ├── context/        ← (optional) additional context files
-        └── runs/           ← (script items only) per-run directories
+        ├── context/        ← (optional) shared context notes (child reports live here)
+        └── runs/           ← (script/research items) per-run directories
 ```
 
 ## Key Files
@@ -41,7 +48,10 @@ MyNotebook/
 | `LOOP-PROMPT.md` | Prompt injected for `analyze`/`ready`/`resolved` items |
 | `IMPL-PROMPT.md` | Prompt injected for `implement` items |
 | `RESOLVE-PROMPT.md` | Prompt injected for `resolved` items (summarize problem/resolution) |
+| `UPDATE-RESEARCH-PROMPT.md` | Prompt for `research` items + child research (unified parent/child modes) |
+| `TASK-PROMPT.md` | Prompt for child task agents (scan + propose, never execute) |
 | `test_run_loop.py` | Unit tests (+ optional remote integration test) |
+| `test_e2e.py` | E2E tests (run the real harness; opt-in via `ENABLE_E2E_TESTS`) |
 
 ## WORK.md Table Schema
 
@@ -49,10 +59,15 @@ MyNotebook/
 | ID | Title / Initial Prompt | Location | Status | Last Updated | Budget | Log |
 ```
 
-- **ID** — folder name under `Work-Loop/`; also the Jira key if it looks like one
+- **ID** — folder name under `Work-Loop-Items/`; also the Jira key if it looks like one
+- **Title** — first link is the CONVERSATION link; the loop appends one `<br>`-separated link per child report (see README, Child Agents). The first link is used to seed CONVERSATION.md for `new` items.
 - **Location** — `local` or `user@hostname` for remote SSH dispatch; for script items: `linux:user@host` or `win:user@host`
 - **Status** — controls what the loop does (see below)
 - **Budget** — per-item override (e.g. `$5.0`); defaults to `MAX_BUDGET` (10.00)
+
+The loop also maintains a `## Needs Attention` bullet section near the top of WORK.md
+(marker-fenced, omitted when empty) listing items/children needing review. It is bullets, not a
+table, so table parsers ignore it.
 
 ## Status State Machine
 
@@ -123,6 +138,17 @@ analysis_prompt: Summarize the results    # optional: AI prompt to analyze aggre
 
 The loop dispatches the command to each machine, polls for completion (via `.done` sentinel, heartbeat file, or file count changes), then runs an optional aggregation script and/or AI analysis prompt (fan-in).
 
+### Research Items
+
+Research items use `RUNS.md` with `type: research` and an optional `schedule: <cron>`. They run `UPDATE-RESEARCH-PROMPT.md` to fetch web sources, update a specified `note_path`, and append run logs to `RUNS.md` and `runs/{run_id}/research.md`.
+
+### Child Agents
+
+Parent conversation items can delegate background work to child agents defined in `{ITEM_ID}/children/{child_name}/RUNS.md` and tracked in `{ITEM_ID}/WORK-CHILDREN.md`:
+- **`type: research`** — fetches sources, updates `note_path`, writes `runs/{run_id}/research.md`
+- **`type: task`** — scans local files, proposes actions (never executes), writes `runs/{run_id}/task.md`
+- Children set an attention marker (`<!-- attention: yes — {reason} -->` or `<!-- attention: no -->`) on line 1 of their target note to feed into the top-level `## Needs Attention` dashboard in `WORK.md`.
+
 ## Loop Execution
 
 ```bash
@@ -133,9 +159,11 @@ Each iteration:
 1. Moves `done` rows to the Done section
 2. Resumes any running script items (polling recovery)
 3. Recovers any stalled remote jobs (polls `.done` sentinel)
-4. Initializes `new` items
-5. Promotes `scheduled` script items whose cron fires now
-6. Picks up `ready`/`analyze`/`implement`/`resolved` items and processes them
+4. Refreshes the WORK.md child dashboard (report links + `## Needs Attention`)
+5. Initializes `new` items
+6. Promotes `scheduled` script and research items whose cron fires now
+7. Picks up `ready`/`analyze`/`implement`/`resolved`/`research` items and processes them
+8. Processes child agents (research and task) for all parent items
 
 For **conversation items** (local): runs the configured harness (Claude or OpenCode) with the prompt + `ITEM_ID`/`WORK_LOOP_DIR`/`ITEM_DIR` appended.
 
@@ -211,4 +239,11 @@ All failures set status to `needs-review` and prepend an abort notice to `CONVER
 ```bash
 python3 -m pytest test_run_loop.py -v
 # Remote integration test runs automatically if remote is reachable
+```
+
+E2E tests (`test_e2e.py`) run the real harness and are opt-in:
+
+```bash
+ENABLE_E2E_TESTS=1 pytest test_e2e.py -v   # run e2e in the foreground
+ENABLE_BACKGROUND_E2E=1 pytest             # dispatch e2e in background after the unit suite
 ```

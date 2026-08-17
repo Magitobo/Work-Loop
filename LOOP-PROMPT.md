@@ -136,6 +136,11 @@ Find the row with {ITEM_ID} in `{WORK_LOOP_DIR}/WORK.md`. Set Status to "needs-r
 If the Title cell is plain text (not a markdown link), derive a concise title (3–6 words) and
 replace with `[concise title]({ITEM_ID}/CONVERSATION.md)`.
 
+**Preserve child report links:** the loop maintains `<br>`-separated child-report links in the
+Title cell (after the CONVERSATION link). When you rewrite the Title cell, keep the first
+(CONVERSATION) link and leave any existing `<br>...` child-report links intact. Do NOT create
+or edit the `## Needs Attention` section — the loop manages it.
+
 ## Step 6 — Managing Child Agents
 
 You can manage child agents. Two types are available:

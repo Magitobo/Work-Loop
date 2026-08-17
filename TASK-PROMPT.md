@@ -20,7 +20,7 @@ If PARENT_ID is set, you are operating as a child agent.
 ## Step 1 — Load Context
 
 1. Read `{ITEM_DIR}/RUNS.md` — extract title, note_path, and `## Prompt`.
-2. Read the existing note at `note_path` (resolve the relative path from `{ITEM_DIR}`).
+2. Read the existing note at `note_path` (resolve the relative path from `{PARENT_DIR}/children`).
 3. Read prior run summaries from `{ITEM_DIR}/runs/` (newest first) for context on what was already proposed.
 
 ## Step 2 — Scan
@@ -42,6 +42,8 @@ If nothing needs action, say so explicitly.
 Overwrite the note at `note_path` with your proposals:
 
 ```markdown
+{ATTENTION comment — see below}
+
 ## Recent Scan: {YYYY-MM-DD}
 
 {Your proposals in a clear, actionable format — table or bullet points}
@@ -49,6 +51,15 @@ Overwrite the note at `note_path` with your proposals:
 ## Previous Suggestions
 {Carry forward any previously proposed but not-yet-executed items from the existing note}
 ```
+
+**Attention marker (required, first line of the note):** The loop reads a single HTML
+comment at the very top of the note to decide whether to surface it in WORK.md's
+`## Needs Attention` section. It is invisible in Obsidian. Write exactly one of:
+
+- `<!-- attention: yes — {one-line reason} -->` — when your proposals include items that
+  need the user's decision or approval (e.g. medium/low-confidence items, ambiguous
+  destinations, or previously proposed items still unexecuted).
+- `<!-- attention: no -->` — otherwise (nothing requires the user's input).
 
 ## Step 5 — Write Task Summary
 

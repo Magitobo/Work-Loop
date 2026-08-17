@@ -15,6 +15,13 @@ _E2E_LOG = "e2e_results.log"
 _E2E_STATE = "e2e_state.json"
 
 
+# Ignore test_e2e.py in standard test runs unless explicitly enabled in the
+# foreground. ENABLE_BACKGROUND_E2E must NOT un-ignore here: the background
+# dispatcher (pytest_sessionfinish) spawns its own e2e process, and un-ignoring
+# would also run the e2e suite in the foreground (double run).
+collect_ignore = [] if os.environ.get("ENABLE_E2E_TESTS") else ["test_e2e.py"]
+
+
 def pytest_configure(config):
     """Report stale e2e results at the top of every test run."""
     if os.environ.get("PYTEST_E2E"):
@@ -70,7 +77,10 @@ def pytest_configure(config):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Spawn e2e tests in a background process after the main suite."""
+    """Spawn e2e tests in a background process after the main suite only if ENABLE_BACKGROUND_E2E=1."""
+    if not os.environ.get("ENABLE_BACKGROUND_E2E"):
+        return  # Disabled by default
+
     if os.environ.get("PYTEST_E2E"):
         return  # Don't recurse
 
@@ -80,7 +90,7 @@ def pytest_sessionfinish(session, exitstatus):
             e2e_cmd,
             stdout=log,
             stderr=subprocess.STDOUT,
-            env={**os.environ, "PYTEST_E2E": "1"},
+            env={**os.environ, "PYTEST_E2E": "1", "ENABLE_E2E_TESTS": "1"},
         )
 
     state = {"ts": time.time(), "pid": proc.pid}

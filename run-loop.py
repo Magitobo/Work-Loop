@@ -1760,6 +1760,171 @@ class WorkLoop:
                     else:
                         print(f"[{_ts()}] {parent_id}/{child_name}: stale running status — parent agent should handle")
 
+    # -------------------------------------------------------------------------
+    # WORK.md child dashboard: report links + needs-attention
+    # -------------------------------------------------------------------------
+
+    _ATTENTION_RE = re.compile(r'<!--\s*attention:\s*yes\b(.*?)-->', re.IGNORECASE | re.DOTALL)
+    _MARKDOWN_LINK_RE = re.compile(r'\[[^\]]+\]\([^)]+\)')
+    _NA_BEGIN = '<!-- NEEDS-ATTENTION:BEGIN -->'
+    _NA_END = '<!-- NEEDS-ATTENTION:END -->'
+
+    def _resolve_child_note(self, parent_id: str, config: dict) -> Path | None:
+        """Resolve a child's note_path to an absolute Path (or None if unset).
+
+        Child note_path values are stored relative to the parent's `children/` directory,
+        so `../context/file.md` resolves to `{parent_id}/context/file.md`.
+        """
+        note_path = config.get('note_path', '')
+        if not note_path:
+            return None
+        base = self.work_dir / parent_id / "children"
+        return (base / note_path).resolve()
+
+    def _child_note_relpath(self, parent_id: str, resolved: Path) -> str:
+        """Return a work_dir-relative path for a child note (used for WORK.md links)."""
+        try:
+            return resolved.relative_to(self.work_dir.resolve()).as_posix()
+        except ValueError:
+            return str(resolved)
+
+    def _sync_parent_report_links(self, parent_id: str) -> bool:
+        """Append one <br>-separated report link per child to the parent's WORK.md Title cell.
+
+        Keeps the first markdown link (the CONVERSATION link) as the base and rebuilds the
+        child-report links from scratch. Idempotent: only rewrites the cell when it changes.
+        Returns True if the cell was changed.
+        """
+        children = self.get_children(parent_id)
+        links = []
+        seen = set()
+        for child_name, _status, config in children:
+            resolved = self._resolve_child_note(parent_id, config)
+            if resolved is None:
+                continue
+            relpath = self._child_note_relpath(parent_id, resolved)
+            if relpath in seen:
+                continue
+            seen.add(relpath)
+            title = config.get('title', child_name)
+            links.append(f"[{title}]({relpath})")
+
+        current = self.get_col(parent_id, COL_TITLE)
+        base_match = self._MARKDOWN_LINK_RE.search(current)
+        base = base_match.group(0) if base_match else (current.split('<br>')[0].strip() or '')
+        parts = ([base] if base else []) + links
+        desired = '<br>'.join(parts)
+
+        if desired != current:
+            self.update_col(parent_id, COL_TITLE, desired)
+            return True
+        return False
+
+    def _read_child_attention(self, resolved: Path | None) -> str | None:
+        """Return the attention reason if a child note is flagged `<!-- attention: yes -->`."""
+        if not resolved:
+            return None
+        note = Path(resolved)
+        if not note.exists():
+            return None
+        try:
+            text = note.read_text(errors='replace')
+        except OSError:
+            return None
+        m = self._ATTENTION_RE.search(text)
+        if not m:
+            return None
+        reason = m.group(1).strip().lstrip('—–-: ').strip()
+        return reason or 'needs attention'
+
+    def _build_needs_attention_lines(self) -> list[str]:
+        """Build the bullet lines for the Needs Attention section."""
+        lines = []
+        # Top-level items in needs-review (active section only).
+        for line in self._read_lines():
+            stripped = line.rstrip('\n')
+            if stripped.startswith('## Done'):
+                break
+            if not stripped.startswith('|'):
+                continue
+            cols = stripped.split('|')
+            if not _is_data_row(cols) or cols[COL_STATUS].strip() != 'needs-review':
+                continue
+            item_id = cols[COL_ID].strip()
+            lines.append(f"- **{item_id}** (needs-review). [Open conversation]({item_id}/CONVERSATION.md)")
+        # Children that need attention.
+        for parent_id in self._get_all_item_ids():
+            for child_name, child_status, config in self.get_children(parent_id):
+                resolved = self._resolve_child_note(parent_id, config)
+                relpath = self._child_note_relpath(parent_id, resolved) if resolved else None
+                link = f" [Open report]({relpath})" if relpath else ""
+                if child_status == 'needs-review':
+                    lines.append(f"- **{parent_id} / {child_name}** (needs-review).{link}")
+                else:
+                    reason = self._read_child_attention(resolved)
+                    if reason:
+                        lines.append(f"- **{parent_id} / {child_name}** — {reason}.{link}")
+        return lines
+
+    def _find_needs_attention_insert_idx(self, text: str) -> int:
+        """Char index to insert the block: before ## Work Items, else ## Done, else end."""
+        for marker in ('\n## Work Items', '\n## Done'):
+            idx = text.find(marker)
+            if idx != -1:
+                return idx + 1
+        return len(text)
+
+    def _replace_needs_attention_block(self, text: str, block: str) -> str:
+        """Insert/replace/remove the marker-fenced Needs Attention block.
+
+        `block` is the full fenced block (incl. markers + trailing newline), or '' to remove.
+        """
+        begin_idx = text.find(self._NA_BEGIN)
+        end_idx = text.find(self._NA_END)
+        if begin_idx != -1 and end_idx != -1:
+            end_idx += len(self._NA_END)
+            if end_idx < len(text) and text[end_idx] != '\n':
+                newline_idx = text.find('\n', end_idx)
+                end_idx = len(text) if newline_idx == -1 else newline_idx + 1
+            while end_idx < len(text) and text[end_idx] == '\n':
+                end_idx += 1
+            text = text[:begin_idx] + text[end_idx:]
+        if not block:
+            return text
+        insert_idx = self._find_needs_attention_insert_idx(text)
+        return text[:insert_idx] + block + text[insert_idx:]
+
+    def _refresh_work_md_dashboard(self) -> None:
+        """Maintain child report links and the Needs Attention section in WORK.md.
+
+        Idempotent and write-only-on-change so idle cycles cause no file churn. Never raises.
+        """
+        if not self.work_file.exists():
+            return
+        try:
+            for parent_id in self._get_all_item_ids():
+                if self.get_children(parent_id):
+                    self._sync_parent_report_links(parent_id)
+
+            lines = self._build_needs_attention_lines()
+            if lines:
+                block = (
+                    self._NA_BEGIN + "\n"
+                    "## Needs Attention\n\n"
+                    + "\n".join(lines)
+                    + "\n"
+                    + self._NA_END + "\n\n"
+                )
+            else:
+                block = ""
+
+            text = self.work_file.read_text()
+            new_text = self._replace_needs_attention_block(text, block)
+            if new_text != text:
+                self._write_lines(new_text.splitlines(keepends=True))
+        except Exception as e:
+            print(f"[{_ts()}] WARNING: _refresh_work_md_dashboard failed: {e}")
+
     def _read_run_state(self, item_id: str, run_id: str) -> dict | None:
         state_file = self.work_dir / item_id / "runs" / run_id / "run_state.json"
         if not state_file.exists():
@@ -2082,6 +2247,7 @@ class WorkLoop:
         while not self._stop:
             self.move_done_items()
             self.check_stalled_remotes()
+            self._refresh_work_md_dashboard()
 
             for item_id in self.get_new_items():
                 self.initialize_new_item(item_id)

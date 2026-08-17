@@ -2,7 +2,7 @@
 
 ## Overview
 
-Work-Loop is an automated harness that runs AI agents (Claude or OpenCode) on work items one at a time. Each item gets a fresh context, and items can run locally or be dispatched to remote hosts over SSH. The loop also supports **script items** — automated command dispatch to one or more machines with cron scheduling, multi-machine polling, and fan-in aggregation — **research items** — automated web research that fetches sources, compares against existing notes, and writes updated notes with per-run summaries — **child research agents** — parent items can spawn and manage sub-agents via a propose/approve workflow for focused, parallel research — and **verified research** — de novo web research with multi-angle search, claim extraction with confidence ratings, contradiction resolution, and a human gate (available as a sub-agent invoked by the LOOP-PROMPT agent).
+Work-Loop is an automated harness that runs AI agents (Claude or OpenCode) on work items one at a time. Each item gets a fresh context, and items can run locally or be dispatched to remote hosts over SSH. The loop also supports **script items** — automated command dispatch to one or more machines with cron scheduling, multi-machine polling, and fan-in aggregation — **research items** — automated web research that fetches sources, compares against existing notes, and writes updated notes with per-run summaries — **child agents** — parent items can spawn and manage sub-agents (research and task) via a propose/approve workflow for focused, parallel work — and **verified research** — de novo web research with multi-angle search, claim extraction with confidence ratings, contradiction resolution, and a human gate (available as a sub-agent invoked by the LOOP-PROMPT agent).
 
 ## Quick Start
 
@@ -51,6 +51,7 @@ Work-Loop/                    ← scripts repo
 ├── IMPL-PROMPT.md            ← prompt for implement items
 ├── RESOLVE-PROMPT.md         ← prompt for resolved items (summary)
 ├── UPDATE-RESEARCH-PROMPT.md ← prompt for research items (parent + child modes)
+├── TASK-PROMPT.md            ← prompt for child task agents
 ├── .opencode/                ← OpenCode agent config + sub-agent definitions
 │   └── agents/               ← sub-agent definitions (verified-research.md, etc.)
 └── <work_dir>/               ← work items (path configured in config.json)
@@ -60,11 +61,11 @@ Work-Loop/                    ← scripts repo
         ├── _logs/            ← harness logs
         ├── background.md     ← (optional) internal context
         ├── WORK-CHILDREN.md  ← (optional) child agent registry
-        ├── context/          ← (optional) shared research output
+        ├── context/          ← (optional) shared context notes (child reports live here)
         └── children/         ← (optional) child agent directories
             └── {name}/      ← one folder per child agent
                 ├── RUNS.md ← child config + run history
-                └── runs/  ← per-run research summaries
+                └── runs/  ← per-run summaries (research.md / task.md)
 ```
 
 ## WORK.md Table
@@ -74,12 +75,16 @@ The work item table is the source of truth. Each row has these columns:
 | Column | Description |
 |---|---|
 | ID | Folder name under `Work-Loop-Items/`; also the Jira key if it looks like one |
-| Title | Item description (markdown link to `CONVERSATION.md` recommended) |
+| Title | Item description (first link to `CONVERSATION.md`; child report links appended after) |
 | Location | `local` or `user@hostname` for remote dispatch |
 | Status | Controls loop behavior (see state machine below) |
 | Last Updated | Date of last activity |
 | Budget | Per-item override (e.g. `$5.0`); defaults to `max_budget_usd` |
 | Log | Link to the harness log file |
+
+The loop also maintains a `## Needs Attention` bullet section near the top of `WORK.md`
+(marker-fenced, omitted when empty) listing items and children needing review. It uses bullets
+rather than table rows so it never interferes with table parsing.
 
 ## Conversation Items — State Machine
 
@@ -134,7 +139,6 @@ Child agents are tracked in `WORK-CHILDREN.md` within the parent item folder. Th
 | `ready` | Ready to run (one-off or cron-promoted) |
 | `scheduled` | Has a cron schedule; waiting for cron to fire |
 | `running` | Currently being processed by the loop |
-| `success` | Latest run completed successfully |
 | `done` | One-off complete (parent can re-promote to `ready` to re-run) |
 | `needs-review` | Latest run failed or needs user review |
 | `paused` | Manually paused by parent agent |
@@ -143,10 +147,9 @@ Child agents are tracked in `WORK-CHILDREN.md` within the parent item folder. Th
 ### State Transitions
 
 ```
-ready ──(loop processes)──> running ──(completes)──>
-    ├── success ──┬── scheduled (if cron)
-    │             └── done (if no cron)
-    └── needs-review
+ready ──(loop processes)──> running ──(completes)──┬── scheduled (if cron)
+                                                   └── done (if no cron)
+                            └──(fails)──> needs-review
 
 scheduled ──(cron fires)──> ready
 paused / done ──(parent)──> ready     ← direct, no approval needed
@@ -205,9 +208,27 @@ Scan the 00 Inbox folder. Suggest which folder each file should move to:
 ```
 
 - `parent: {ITEM_ID}` — required; links the child to its parent for discovery and orphan detection
-- `note_path` — relative to the child's `children/{name}/` directory; typically `../context/...` to write to the parent's shared context
+- `note_path` — relative to the parent's `children/` directory; use `../context/...` to write to the parent's shared context
 - Research children write results to `runs/{run_id}/research.md`; task children to `runs/{run_id}/task.md`
 - Children must have unique `note_path` values; the loop enforces this at process time
+
+### WORK.md Dashboard (Report Links + Needs Attention)
+
+The loop maintains two child-facing surfaces in top-level `WORK.md` each iteration (idempotent,
+write-only-on-change, so idle cycles cause no churn):
+
+- **Report links** — each parent with children gets one `<br>`-separated link per child report
+  in its Title cell, after the CONVERSATION link. The link points at the child's `note_path`
+  (the always-current note), so a child's report is one click away:
+  `[Parent title]({parent}/CONVERSATION.md)<br>[{child title}]({parent}/context/{note}.md)`.
+- **`## Needs Attention` section** — a bullet list near the top of `WORK.md` (omitted when empty)
+  listing what needs review: top-level items in `needs-review`, children in `needs-review`, and
+  children whose report is flagged with an attention marker. Each entry links straight to the
+  report. It is a bullet list (not a table), so it never disturbs the loop's table parsing.
+
+**Attention marker:** a child writes a single HTML comment as the first line of its `note_path`
+note — `<!-- attention: yes — {one-line reason} -->` when the user's decision is needed, else
+`<!-- attention: no -->`. It is invisible in Obsidian but read by the loop to drive the section.
 
 ## Script Items
 
@@ -354,9 +375,18 @@ python3 -m pytest test_run_loop.py -v
 # Remote integration test runs automatically if remote is reachable
 ```
 
+E2E tests (`test_e2e.py`) run the real harness and are opt-in:
+
+```bash
+ENABLE_E2E_TESTS=1 pytest test_e2e.py -v   # run e2e in the foreground
+ENABLE_BACKGROUND_E2E=1 pytest             # dispatch e2e in background after the unit suite
+```
+
+Background results are written to `e2e_results.log` and reported at the top of the next test run.
+
 ## Prompt Files
 
-Four prompt files control agent behavior. They are injected automatically based on the item's status:
+Five prompt files control agent behavior. They are injected automatically based on the item's status:
 
 | File | Triggered By | Purpose |
 |---|---|---|
@@ -364,7 +394,8 @@ Four prompt files control agent behavior. They are injected automatically based 
 | `IMPL-PROMPT.md` | `implement` | Code implementation with code review |
 | `RESOLVE-PROMPT.md` | `resolved` | Problem/resolution summary |
 | `UPDATE-RESEARCH-PROMPT.md` | `research`, child research | Fetch sources, compare against note, write updated note and summary (unified for parent and child modes) |
-Each prompt receives `ITEM_ID`, `WORK_LOOP_DIR`, and `ITEM_DIR` as variables. Research items also receive `topic`, `note_path`, `sources`, `research_context`, and `BACKLINK_TARGET`. Child research agents additionally receive `PARENT_ID`, `PARENT_DIR`, and `run_id`. The consolidated `UPDATE-RESEARCH-PROMPT.md` handles both parent and child modes — child mode is detected by the presence of `PARENT_ID`.
+| `TASK-PROMPT.md` | child task | Scan local files, propose actions (never executes), write note + task summary |
+Each prompt receives `ITEM_ID`, `WORK_LOOP_DIR`, and `ITEM_DIR` as variables. Research items also receive `topic`, `note_path`, `sources`, `research_context`, and `BACKLINK_TARGET`. Child agents additionally receive `PARENT_ID`, `PARENT_DIR`, and `run_id`. The consolidated `UPDATE-RESEARCH-PROMPT.md` handles both parent and child modes — child mode is detected by the presence of `PARENT_ID`.
 
 ### Sub-Agents
 
@@ -385,7 +416,8 @@ Each iteration of the loop:
 1. Moves `done` rows to the Done section
 2. Resumes any running script items (polling recovery)
 3. Recovers any stalled remote jobs (polls `.done` sentinel)
-4. Initializes `new` items
-5. Promotes `scheduled` script and research items whose cron fires now
-6. Picks up `ready`/`analyze`/`implement`/`resolved`/`research` items and processes them
-7. Processes child research agents for all parent items (including `done` parents with active scheduled children); re-scans for newly created children after processing each parent
+4. Refreshes the WORK.md child dashboard (report links + `## Needs Attention`)
+5. Initializes `new` items
+6. Promotes `scheduled` script and research items whose cron fires now
+7. Picks up `ready`/`analyze`/`implement`/`resolved`/`research` items and processes them
+8. Processes child agents (research and task) for all parent items (including `done` parents with active scheduled children); re-scans for newly created children after processing each parent
