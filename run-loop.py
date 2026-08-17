@@ -82,6 +82,7 @@ class ClaudeHarness(Harness):
         ]
         proc = subprocess.Popen(
             cmd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             cwd=cwd or str(work_dir_from_config),
@@ -115,7 +116,7 @@ class ClaudeHarness(Harness):
 
     def launcher_script(self, item_id: str, ts_str: str, budget: float, mode: str, work_dir: str | None, remote_work_dir: str) -> str:
         if mode == "implement":
-            prompt_file = "IMPL-PROMPT.md"
+            prompt_file = "prompts/IMPL-PROMPT.md"
             extra_vars = f"$'\\nITEM_ID: {item_id}\\nWORK_LOOP_DIR: {remote_work_dir}\\nITEM_DIR: {remote_work_dir}/{item_id}'"
             rwd_capture = 'RWD="$(pwd)"\n'
             cd_work = f"cd {work_dir}\n" if work_dir else ""
@@ -123,7 +124,7 @@ class ClaudeHarness(Harness):
             log_redir = f'> "$RWD/{item_id}/_logs/{ts_str}_{item_id}.log" 2>&1'
             done_dir = '$RWD'
         elif mode == "resolved":
-            prompt_file = "RESOLVE-PROMPT.md"
+            prompt_file = "prompts/RESOLVE-PROMPT.md"
             extra_vars = f"$'\\nITEM_ID: {item_id}'"
             rwd_capture = ""
             cd_work = ""
@@ -131,7 +132,7 @@ class ClaudeHarness(Harness):
             log_redir = f'> "{item_id}/_logs/{ts_str}_{item_id}.log" 2>&1'
             done_dir = '.'
         else:
-            prompt_file = "LOOP-PROMPT.md"
+            prompt_file = "prompts/LOOP-PROMPT.md"
             extra_vars = f"$'\\nITEM_ID: {item_id}'"
             rwd_capture = ""
             cd_work = ""
@@ -146,7 +147,8 @@ class ClaudeHarness(Harness):
             f"mkdir -p {item_id}/_logs\n"
             f"{rwd_capture}"
             'BASE_PROMPT=""\n'
-            '[ -f BASE-PROMPT.md ] && BASE_PROMPT="$(cat BASE-PROMPT.md)"$\'\\n\\n\'\n'
+            '[ -f prompts/BASE-PROMPT.md ] && BASE_PROMPT="$(cat prompts/BASE-PROMPT.md)"$\'\\n\\n\'\n'
+            '[ -z "$BASE_PROMPT" ] && [ -f BASE-PROMPT.md ] && BASE_PROMPT="$(cat BASE-PROMPT.md)"$\'\\n\\n\'\n'
             f'PROMPT="${{BASE_PROMPT}}$(cat {prompt_file})"{extra_vars}\n'
             f"{cd_work}"
             f'claude --print --permission-mode auto --max-budget-usd {budget} {debug_flag}"$PROMPT" {log_redir} &\n'
@@ -217,6 +219,7 @@ class OpenCodeHarness(Harness):
 
         proc = subprocess.Popen(
             cmd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             cwd=cwd or str(work_dir_from_config),
@@ -304,21 +307,21 @@ class OpenCodeHarness(Harness):
         if hasattr(self, '_model') and self._model:
             model_arg = f"--model {self._model} "
         if mode == "implement":
-            prompt_file = "IMPL-PROMPT.md"
+            prompt_file = "prompts/IMPL-PROMPT.md"
             extra_vars = f"$'\\nITEM_ID: {item_id}\\nWORK_LOOP_DIR: {remote_work_dir}\\nITEM_DIR: {remote_work_dir}/{item_id}'"
             rwd_capture = 'RWD="$(pwd)"\n'
             cd_work = f"cd {work_dir}\n" if work_dir else ""
             log_redir = f'> "$RWD/{item_id}/_logs/{ts_str}_{item_id}.log" 2>&1'
             done_dir = '$RWD'
         elif mode == "resolved":
-            prompt_file = "RESOLVE-PROMPT.md"
+            prompt_file = "prompts/RESOLVE-PROMPT.md"
             extra_vars = f"$'\\nITEM_ID: {item_id}'"
             rwd_capture = ""
             cd_work = ""
             log_redir = f'> "{item_id}/_logs/{ts_str}_{item_id}.log" 2>&1'
             done_dir = '.'
         else:
-            prompt_file = "LOOP-PROMPT.md"
+            prompt_file = "prompts/LOOP-PROMPT.md"
             extra_vars = f"$'\\nITEM_ID: {item_id}'"
             rwd_capture = ""
             cd_work = ""
@@ -330,7 +333,8 @@ class OpenCodeHarness(Harness):
             f"mkdir -p {item_id}/_logs\n"
             f"{rwd_capture}"
             'BASE_PROMPT=""\n'
-            '[ -f BASE-PROMPT.md ] && BASE_PROMPT="$(cat BASE-PROMPT.md)"$\'\\n\\n\'\n'
+            '[ -f prompts/BASE-PROMPT.md ] && BASE_PROMPT="$(cat prompts/BASE-PROMPT.md)"$\'\\n\\n\'\n'
+            '[ -z "$BASE_PROMPT" ] && [ -f BASE-PROMPT.md ] && BASE_PROMPT="$(cat BASE-PROMPT.md)"$\'\\n\\n\'\n'
             f'PROMPT="${{BASE_PROMPT}}$(cat {prompt_file})"{extra_vars}\n'
             f"{cd_work}"
             f'opencode run --auto --format json --title {item_id} {model_arg}"$PROMPT" {log_redir} &\n'
@@ -415,11 +419,19 @@ class WorkLoop:
         work_loop_instance = self
 
         # Prompt files — harness type determines agent dir but prompts stay the same
-        self.base_prompt_file = self.script_dir / "BASE-PROMPT.md"
-        self.prompt_file = self.script_dir / "LOOP-PROMPT.md"
-        self.impl_prompt_file = self.script_dir / "IMPL-PROMPT.md"
-        self.resolve_prompt_file = self.script_dir / "RESOLVE-PROMPT.md"
-        self.child_research_prompt_file = self.script_dir / "UPDATE-RESEARCH-PROMPT.md"
+        self.prompts_dir = self.script_dir / "prompts"
+        self.base_prompt_file = self._resolve_prompt("BASE-PROMPT.md")
+        self.prompt_file = self._resolve_prompt("LOOP-PROMPT.md")
+        self.impl_prompt_file = self._resolve_prompt("IMPL-PROMPT.md")
+        self.resolve_prompt_file = self._resolve_prompt("RESOLVE-PROMPT.md")
+        self.child_research_prompt_file = self._resolve_prompt("UPDATE-RESEARCH-PROMPT.md")
+
+    def _resolve_prompt(self, filename: str) -> Path:
+        """Resolve a prompt file path, checking prompts/ subdir first, then script_dir."""
+        prompts_path = self.script_dir / "prompts" / filename
+        if prompts_path.exists():
+            return prompts_path
+        return self.script_dir / filename
 
     def _read_base_prompt(self) -> str:
         """Return content of BASE-PROMPT.md with trailing newlines, or empty string if missing."""
@@ -794,7 +806,7 @@ class WorkLoop:
 
         if mode == "research":
             config = self._parse_runs_md(item_id)
-            research_prompt_file = self.script_dir / "UPDATE-RESEARCH-PROMPT.md"
+            research_prompt_file = self._resolve_prompt("UPDATE-RESEARCH-PROMPT.md")
             if research_prompt_file.exists():
                 prompt_text = research_prompt_file.read_text()
             else:
@@ -820,7 +832,7 @@ class WorkLoop:
             )
             cwd = str(self.work_dir)
         elif mode == "implement":
-            impl_prompt_file = self.script_dir / "IMPL-PROMPT.md"
+            impl_prompt_file = self._resolve_prompt("IMPL-PROMPT.md")
             if impl_prompt_file.exists():
                 prompt_text = impl_prompt_file.read_text()
                 cwd = self.extract_work_dir(item_id)
@@ -828,7 +840,7 @@ class WorkLoop:
                 prompt_text = self.prompt_file.read_text()
                 cwd = str(self.work_dir)
         elif mode == "resolved":
-            resolve_prompt_file = self.script_dir / "RESOLVE-PROMPT.md"
+            resolve_prompt_file = self._resolve_prompt("RESOLVE-PROMPT.md")
             if resolve_prompt_file.exists():
                 prompt_text = resolve_prompt_file.read_text()
             else:
@@ -915,23 +927,25 @@ class WorkLoop:
     def dispatch_remote(self, item_id: str, ts_str: str, remote_host: str, budget: float, mode: str = "analyze") -> None:
         self._auto_init_conversation(item_id)
         rwd = self.remote_work_dir
-        _run(["ssh", remote_host, f"rm -rf {rwd} && mkdir -p {rwd}/{item_id}/_logs"])
+        _run(["ssh", remote_host, f"rm -rf {rwd} && mkdir -p {rwd}/{item_id}/_logs {rwd}/prompts"])
 
         item_dir = self.work_dir / item_id
         _run(["rsync", "-avz", "--delete", "--exclude=.done", f"{item_dir}/", f"{remote_host}:{rwd}/{item_id}/"])
-        _run(["rsync", "-avz", str(self.prompt_file), f"{remote_host}:{rwd}/"])
+        if (self.script_dir / "prompts").exists():
+            _run(["rsync", "-avz", str(self.script_dir / "prompts") + "/", f"{remote_host}:{rwd}/prompts/"])
+        else:
+            _run(["rsync", "-avz", str(self.prompt_file), f"{remote_host}:{rwd}/prompts/"])
+            if self.base_prompt_file.exists():
+                _run(["rsync", "-avz", str(self.base_prompt_file), f"{remote_host}:{rwd}/prompts/"])
 
-        if self.base_prompt_file.exists():
-            _run(["rsync", "-avz", str(self.base_prompt_file), f"{remote_host}:{rwd}/"])
-
-        if mode == "implement":
-            impl_prompt_file = self.script_dir / "IMPL-PROMPT.md"
-            if impl_prompt_file.exists():
-                _run(["rsync", "-avz", str(impl_prompt_file), f"{remote_host}:{rwd}/"])
-        elif mode == "resolved":
-            resolve_prompt_file = self.script_dir / "RESOLVE-PROMPT.md"
-            if resolve_prompt_file.exists():
-                _run(["rsync", "-avz", str(resolve_prompt_file), f"{remote_host}:{rwd}/"])
+            if mode == "implement":
+                impl_prompt_file = self._resolve_prompt("IMPL-PROMPT.md")
+                if impl_prompt_file.exists():
+                    _run(["rsync", "-avz", str(impl_prompt_file), f"{remote_host}:{rwd}/prompts/"])
+            elif mode == "resolved":
+                resolve_prompt_file = self._resolve_prompt("RESOLVE-PROMPT.md")
+                if resolve_prompt_file.exists():
+                    _run(["rsync", "-avz", str(resolve_prompt_file), f"{remote_host}:{rwd}/prompts/"])
 
         agent_dir = self.script_dir / self.harness.agent_dir_name()
         if agent_dir.exists():
@@ -1675,7 +1689,7 @@ class WorkLoop:
             prompt_file = self.child_research_prompt_file
             summary_file = 'research.md'
         elif child_type == 'task':
-            prompt_file = self.script_dir / "TASK-PROMPT.md"
+            prompt_file = self._resolve_prompt("TASK-PROMPT.md")
             summary_file = 'task.md'
         else:
             self._update_child_status(parent_id, child_name, 'needs-review')

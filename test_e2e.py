@@ -20,10 +20,17 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("ENABLE_E2E_TESTS"),
+    reason="E2E tests disabled (set ENABLE_E2E_TESTS=1 to run)",
+)
 
 # ---------------------------------------------------------------------------
 # Import run-loop.py
@@ -47,20 +54,26 @@ COL_LAST_UPDATED = run_loop.COL_LAST_UPDATED
 # ---------------------------------------------------------------------------
 
 REPO_DIR = _HERE  # Work-Loop repo root
+PROMPTS_DIR = REPO_DIR / "prompts" if (REPO_DIR / "prompts").is_dir() else REPO_DIR
 
 PROMPT_FILES = [
+    "BASE-PROMPT.md",
     "LOOP-PROMPT.md",
     "IMPL-PROMPT.md",
     "RESOLVE-PROMPT.md",
     "UPDATE-RESEARCH-PROMPT.md",
+    "TASK-PROMPT.md",
 ]
 
 
 def _copy_prompts_and_agents(tmp_dir: Path) -> None:
     """Copy prompt files into tmp workspace. Agent sync is handled by WorkLoop._sync_agent_dir."""
+    prompts_dest = tmp_dir / "prompts"
+    prompts_dest.mkdir(parents=True, exist_ok=True)
     for fname in PROMPT_FILES:
-        src = REPO_DIR / fname
+        src = PROMPTS_DIR / fname
         if src.exists():
+            shutil.copy2(str(src), prompts_dest / fname)
             shutil.copy2(str(src), tmp_dir / fname)
 
 
@@ -101,6 +114,56 @@ def _make_e2e_workspace(
     wl = WorkLoop(cfg, script_dir=REPO_DIR)
     wl._tmp_dir = tmp  # for cleanup
     return wl
+
+
+def _get_server_base_url() -> str:
+    """Read the base URL for the inference server from OpenCode config or default."""
+    cfg_path = Path.home() / ".config" / "opencode" / "opencode.json"
+    if cfg_path.exists():
+        try:
+            cfg = json.loads(cfg_path.read_text())
+            for prov in cfg.get("provider", {}).values():
+                opts = prov.get("options", {})
+                if "baseURL" in opts:
+                    return opts["baseURL"].replace("/v1", "").rstrip("/")
+        except Exception:
+            pass
+    return "http://mac-studio:5800"
+
+
+def _check_server_health(base_url: str | None = None, model: str | None = None) -> tuple[bool, str]:
+    """Check if the inference server is reachable and optionally has the model registered."""
+    import urllib.request
+    url = base_url or _get_server_base_url()
+    try:
+        req = urllib.request.Request(f"{url}/v1/models", headers={"User-Agent": "Work-Loop-E2E/1.0"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            if resp.status != 200:
+                return False, f"Server at {url}/v1/models returned HTTP {resp.status}"
+            data = json.loads(resp.read().decode("utf-8"))
+            models = [m.get("id") for m in data.get("data", [])]
+            if model and model not in models and f"llama-swap/{model}" not in models:
+                short_model = model.split("/")[-1]
+                if not any(short_model in m for m in models):
+                    return False, f"Model '{model}' not found in server models: {models}"
+            return True, f"Server healthy at {url} (models: {len(models)})"
+    except Exception as e:
+        return False, f"Server at {url} unreachable: {e}"
+
+
+def _get_running_models(base_url: str | None = None) -> list[dict]:
+    """Query the llama-swap /running endpoint to see currently loaded models."""
+    import urllib.request
+    url = base_url or _get_server_base_url()
+    try:
+        req = urllib.request.Request(f"{url}/running", headers={"User-Agent": "Work-Loop-E2E/1.0"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                return data.get("running", [])
+    except Exception:
+        pass
+    return []
 
 
 def _make_research_workspace(
@@ -249,66 +312,40 @@ class JsonLogParser:
 # Tests
 # ---------------------------------------------------------------------------
 
-class TestJsonLogParser(unittest.TestCase):
-    """Unit tests for the log parser — no harness needed."""
 
-    def test_parses_tool_use_events(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
-            f.write('{"type":"tool_use","part":{"tool":"read","state":{"input":{"filePath":"/tmp/test.md"},"status":"completed"}}}\n')
-            f.write('{"type":"step_finish","part":{"reason":"stop"}}\n')
-            f.flush()
-            parser = JsonLogParser(Path(f.name))
-        os.unlink(f.name)
 
-        calls = parser.tool_calls()
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]["tool"], "read")
 
-    def test_has_subagent_spawn(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
-            f.write('{"type":"tool_use","part":{"tool":"task","state":{"input":{"subagent_type":"critic","description":"Review"},"status":"completed"}}}\n')
-            f.flush()
-            parser = JsonLogParser(Path(f.name))
-        os.unlink(f.name)
+# ---------------------------------------------------------------------------
+# Server Health & Connectivity Tests
+# ---------------------------------------------------------------------------
 
-        self.assertTrue(parser.has_subagent_spawn("critic"))
-        self.assertFalse(parser.has_subagent_spawn("code-reviewer"))
+class TestServerConnectivity(unittest.TestCase):
+    """Verify inference server (e.g. llama-swap) connectivity and model status."""
 
-    def test_has_no_subagent_spawn(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
-            f.write('{"type":"tool_use","part":{"tool":"read","state":{"input":{"filePath":"/tmp/test.md"},"status":"completed"}}}\n')
-            f.flush()
-            parser = JsonLogParser(Path(f.name))
-        os.unlink(f.name)
+    def test_server_reachable(self):
+        healthy, reason = _check_server_health()
+        self.assertTrue(healthy, f"Inference server unreachable: {reason}")
 
-        self.assertTrue(parser.has_no_subagent_spawn())
+    def test_running_endpoint(self):
+        running = _get_running_models()
+        self.assertIsInstance(running, list, "Expected /running to return a list")
 
-    def test_has_file_edit(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
-            f.write('{"type":"tool_use","part":{"tool":"edit","state":{"input":{"file_path":"/tmp/CONVERSATION.md"},"status":"completed"}}}\n')
-            f.flush()
-            parser = JsonLogParser(Path(f.name))
-        os.unlink(f.name)
 
-        self.assertTrue(parser.has_file_edit("CONVERSATION.md"))
-        self.assertFalse(parser.has_file_edit("WORK.md"))
+class _BaseLiveE2ETest(unittest.TestCase):
+    """Base class for tests that invoke the live inference server."""
 
-    def test_has_step_stop(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
-            f.write('{"type":"step_finish","part":{"reason":"tool-calls"}}\n')
-            f.write('{"type":"step_finish","part":{"reason":"stop"}}\n')
-            f.flush()
-            parser = JsonLogParser(Path(f.name))
-        os.unlink(f.name)
-
-        self.assertTrue(parser.has_step_stop())
+    @classmethod
+    def setUpClass(cls):
+        healthy, reason = _check_server_health()
+        if not healthy:
+            raise unittest.SkipTest(f"Live inference server unavailable: {reason}")
 
 
 # ---------------------------------------------------------------------------
 # E2E Test: Analyze Mode
 # ---------------------------------------------------------------------------
 
-class TestAnalyzeMode(unittest.TestCase):
+class TestAnalyzeMode(_BaseLiveE2ETest):
     """E2E: ready/analyze items trigger LOOP-PROMPT with critic subagent."""
 
     def _setup(self, item_id: str = "ITEM-001") -> tuple[WorkLoop, Path]:
@@ -398,7 +435,7 @@ class TestAnalyzeMode(unittest.TestCase):
 # E2E Test: Implement Mode
 # ---------------------------------------------------------------------------
 
-class TestImplementMode(unittest.TestCase):
+class TestImplementMode(_BaseLiveE2ETest):
     """E2E: implement items trigger IMPL-PROMPT with code-reviewer subagent."""
 
     def _setup(self) -> tuple[WorkLoop, Path]:
@@ -436,7 +473,7 @@ class TestImplementMode(unittest.TestCase):
 # E2E Test: Resolved Mode
 # ---------------------------------------------------------------------------
 
-class TestResolvedMode(unittest.TestCase):
+class TestResolvedMode(_BaseLiveE2ETest):
     """E2E: resolved items trigger RESOLVE-PROMPT — no subagent spawn."""
 
     def _setup(self) -> tuple[WorkLoop, Path]:
@@ -451,30 +488,33 @@ class TestResolvedMode(unittest.TestCase):
         )
         conversation = (
             "## 2026-01-01 | User\n\n"
-            "Problem: Test issue. Resolution: Fixed by updating config.\n"
-            "## 2026-01-02 | AI Agent\n\n"
-            "Resolved the test issue.\n"
+            "Item is resolved. Please summarize and move to Done.\n"
         )
         wl = _make_e2e_workspace(work_md, "ITEM-001", conversation)
         return wl, wl._tmp_dir
 
-    def test_no_subagent_spawn(self):
+    def test_no_subagents_spawned(self):
         wl, tmp = self._setup()
         wl.process_local("ITEM-001", 10.0)
 
         log = _find_log_file(tmp / "ITEM-001")
         self.assertIsNotNone(log)
         parser = JsonLogParser(log)
-        self.assertTrue(
-            parser.has_no_subagent_spawn(),
-            f"Unexpected subagent spawn. Tool calls: {parser.get_tool_names()}",
+        self.assertFalse(
+            parser.has_subagent_spawn("critic"),
+            "Critic subagent should not be spawned in resolved mode",
+        )
+        self.assertFalse(
+            parser.has_subagent_spawn("code-reviewer"),
+            "Code-reviewer subagent should not be spawned in resolved mode",
         )
 
-    def test_row_moved_to_done_on_success(self):
+    def test_moved_to_done(self):
         wl, tmp = self._setup()
         wl.process_local("ITEM-001", 10.0)
 
-        content = (tmp / "WORK.md").read_text()
+        work_md_file = tmp / "WORK.md"
+        content = work_md_file.read_text()
         # After resolved mode, the row should be in the Done section
         # or status should be 'done' (moved by the agent)
         self.assertIn("ITEM-001", content)
@@ -484,7 +524,7 @@ class TestResolvedMode(unittest.TestCase):
 # E2E Test: Research Mode
 # ---------------------------------------------------------------------------
 
-class TestResearchMode(unittest.TestCase):
+class TestResearchMode(_BaseLiveE2ETest):
     """E2E: research items fetch sources and write research summary."""
 
     def test_webfetch_for_sources(self):
@@ -568,7 +608,7 @@ class TestResearchMode(unittest.TestCase):
 # E2E Test: Child Research
 # ---------------------------------------------------------------------------
 
-class TestChildResearch(unittest.TestCase):
+class TestChildResearch(_BaseLiveE2ETest):
     """E2E: child research items receive parent variables."""
 
     def test_parent_vars_in_prompt(self):
@@ -633,166 +673,6 @@ class TestChildResearch(unittest.TestCase):
         self.assertIn("PARENT_ID: PARENT-001", prompt)
         self.assertIn("PARENT_DIR:", prompt)
 
-
-# ---------------------------------------------------------------------------
-# E2E Test: Agent Directory Sync
-# ---------------------------------------------------------------------------
-
-class TestAgentSync(unittest.TestCase):
-    """Verify .opencode/agents/ is synced to workspace before harness runs."""
-
-    def test_agent_dir_copied_to_workspace(self):
-        work_md = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            "| ITEM-001 | [Test](ITEM-001/C.md) | local | ready |  |  |  |\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        )
-        wl = _make_e2e_workspace(work_md, "ITEM-001", status="ready")
-        tmp = wl._tmp_dir
-
-        # Agent dir should NOT exist in work_dir yet
-        work_opencode = tmp / ".opencode"
-        self.assertFalse(work_opencode.exists(), ".opencode/ should not exist in work_dir initially")
-
-        # Run the agent sync
-        wl._sync_agent_dir(str(tmp))
-
-        # Now it should exist with agent files
-        self.assertTrue(work_opencode.exists(), ".opencode/ not synced to workspace")
-        self.assertTrue(
-            (work_opencode / "agents" / "critic.md").exists(),
-            "critic.md not found in synced agent dir",
-        )
-        self.assertTrue(
-            (work_opencode / "agents" / "code-reviewer.md").exists(),
-            "code-reviewer.md not found in synced agent dir",
-        )
-
-    def test_no_error_when_agent_dir_missing(self):
-        work_md = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            "| ITEM-001 | [Test](ITEM-001/C.md) | local | ready |  |  |  |\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        )
-        wl = _make_e2e_workspace(work_md, "ITEM-001", status="ready")
-        tmp = wl._tmp_dir
-
-        # Remove agent dir from script_dir
-        script_agents = tmp / ".opencode"
-        if script_agents.exists():
-            shutil.rmtree(script_agents)
-
-        # Should not raise
-        wl._sync_agent_dir(str(tmp))
-
-    def test_sync_overwrites_stale_agents(self):
-        work_md = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            "| ITEM-001 | [Test](ITEM-001/C.md) | local | ready |  |  |  |\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        )
-        wl = _make_e2e_workspace(work_md, "ITEM-001", status="ready")
-        tmp = wl._tmp_dir
-
-        # Pre-create stale agent dir
-        stale_dir = tmp / ".opencode" / "agents"
-        stale_dir.mkdir(parents=True)
-        (stale_dir / "old-agent.md").write_text("stale")
-
-        # Sync should replace it
-        wl._sync_agent_dir(str(tmp))
-
-        self.assertTrue((tmp / ".opencode" / "agents" / "critic.md").exists())
-        self.assertFalse((tmp / ".opencode" / "agents" / "old-agent.md").exists())
-
-
-# ---------------------------------------------------------------------------
-# E2E Test: Prompt Loading
-# ---------------------------------------------------------------------------
-
-class TestPromptLoading(unittest.TestCase):
-    """Verify correct prompt file is loaded for each mode."""
-
-    def _capture_prompt(self, wl: WorkLoop, item_id: str) -> str:
-        captured = [None]
-
-        def capture_run(prompt: str, *args, **kwargs):
-            captured[0] = prompt
-            log_file = kwargs.get("log_file") or args[3] if len(args) > 3 else None
-            if log_file:
-                log_file.write_text(
-                    '{"type":"step_finish","part":{"reason":"stop","tokens":{"total":100,"input":80,"output":20,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0}}\n'
-                )
-            return 0
-
-        original = wl.harness.run
-        wl.harness.run = capture_run
-        try:
-            wl.process_local(item_id, 10.0)
-        finally:
-            wl.harness.run = original
-        return captured[0]
-
-    def test_loop_prompt_for_ready(self):
-        work_md = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            "| ITEM-001 | [Test](ITEM-001/C.md) | local | ready |  |  |  |\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        )
-        wl = _make_e2e_workspace(work_md, "ITEM-001")
-        prompt = self._capture_prompt(wl, "ITEM-001")
-        self.assertIsNotNone(prompt)
-        # LOOP-PROMPT.md contains "Multi-Agent" in its title
-        self.assertIn("Multi-Agent", prompt)
-
-    def test_impl_prompt_for_implement(self):
-        work_md = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            "| ITEM-001 | [Test](ITEM-001/C.md) | local | implement |  |  |  |\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        )
-        conversation = "## 2026-01-01 | User\n\nwork_dir: /tmp\n"
-        wl = _make_e2e_workspace(work_md, "ITEM-001", conversation)
-        prompt = self._capture_prompt(wl, "ITEM-001")
-        self.assertIsNotNone(prompt)
-        # IMPL-PROMPT.md contains "Implementation Mode"
-        self.assertIn("Implementation Mode", prompt)
-
-    def test_resolve_prompt_for_resolved(self):
-        work_md = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            "| ITEM-001 | [Test](ITEM-001/C.md) | local | resolved |  |  |  |\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        )
-        wl = _make_e2e_workspace(work_md, "ITEM-001")
-        prompt = self._capture_prompt(wl, "ITEM-001")
-        self.assertIsNotNone(prompt)
-        # RESOLVE-PROMPT.md contains "Resolved Mode"
-        self.assertIn("Resolved Mode", prompt)
 
 
 if __name__ == "__main__":

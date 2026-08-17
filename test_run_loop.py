@@ -2,7 +2,10 @@
 """Tests for run-loop.py — unit tests and optional remote integration test."""
 
 import importlib.util
+import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,6 +18,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 _HERE = Path(__file__).parent
+_PROMPTS_DIR = _HERE / "prompts" if (_HERE / "prompts").is_dir() else _HERE
 _MOD_PATH = _HERE / "run-loop.py"
 
 spec = importlib.util.spec_from_file_location("run_loop", _MOD_PATH)
@@ -1062,7 +1066,7 @@ class TestCheckStalledRemotes(unittest.TestCase):
 class TestLoopPromptPortability(unittest.TestCase):
     """LOOP-PROMPT.md must work when deployed to remote hosts with different layouts."""
 
-    LOOP_PROMPT = _HERE / "LOOP-PROMPT.md"
+    LOOP_PROMPT = _PROMPTS_DIR / "LOOP-PROMPT.md"
 
     @classmethod
     def setUpClass(cls):
@@ -3146,11 +3150,11 @@ class TestChildCronPromotion(unittest.TestCase):
 class TestChildPromptExists(unittest.TestCase):
 
     def test_research_prompt_file_exists(self):
-        prompt_path = _HERE / "UPDATE-RESEARCH-PROMPT.md"
+        prompt_path = _PROMPTS_DIR / "UPDATE-RESEARCH-PROMPT.md"
         self.assertTrue(prompt_path.exists(), "UPDATE-RESEARCH-PROMPT.md should exist")
 
     def test_research_prompt_has_child_mode(self):
-        prompt_path = _HERE / "UPDATE-RESEARCH-PROMPT.md"
+        prompt_path = _PROMPTS_DIR / "UPDATE-RESEARCH-PROMPT.md"
         content = prompt_path.read_text()
         self.assertIn("Child mode", content)
         self.assertIn("Parent mode", content)
@@ -3158,13 +3162,13 @@ class TestChildPromptExists(unittest.TestCase):
         self.assertIn("Do NOT modify any WORK-*.md file", content)
 
     def test_research_prompt_has_parent_block(self):
-        prompt_path = _HERE / "UPDATE-RESEARCH-PROMPT.md"
+        prompt_path = _PROMPTS_DIR / "UPDATE-RESEARCH-PROMPT.md"
         content = prompt_path.read_text()
         self.assertIn("PARENT_ID", content)
         self.assertIn("BACKLINK_TARGET", content)
 
     def test_loop_prompt_has_child_management_section(self):
-        prompt_path = _HERE / "LOOP-PROMPT.md"
+        prompt_path = _PROMPTS_DIR / "LOOP-PROMPT.md"
         content = prompt_path.read_text()
         self.assertIn("Managing Child Agents", content)
 
@@ -3190,11 +3194,11 @@ Scan the 00 Inbox folder. Suggest folder moves.
 class TestTaskChildType(unittest.TestCase):
 
     def test_task_prompt_file_exists(self):
-        prompt_path = _HERE / "TASK-PROMPT.md"
+        prompt_path = _PROMPTS_DIR / "TASK-PROMPT.md"
         self.assertTrue(prompt_path.exists(), "TASK-PROMPT.md should exist")
 
     def test_task_prompt_propose_only(self):
-        prompt_path = _HERE / "TASK-PROMPT.md"
+        prompt_path = _PROMPTS_DIR / "TASK-PROMPT.md"
         content = prompt_path.read_text()
         self.assertIn("propose", content.lower())
         self.assertIn("do NOT", content)
@@ -3451,19 +3455,19 @@ class TestNeedsAttentionDashboard(unittest.TestCase):
 class TestChildAttentionPrompts(unittest.TestCase):
 
     def test_task_prompt_mentions_attention_marker(self):
-        content = (_HERE / "TASK-PROMPT.md").read_text()
+        content = (_PROMPTS_DIR / "TASK-PROMPT.md").read_text()
         self.assertIn("Attention marker", content)
         self.assertIn("<!-- attention: yes", content)
         self.assertIn("<!-- attention: no -->", content)
 
     def test_research_prompt_mentions_child_attention_marker(self):
-        content = (_HERE / "UPDATE-RESEARCH-PROMPT.md").read_text()
+        content = (_PROMPTS_DIR / "UPDATE-RESEARCH-PROMPT.md").read_text()
         self.assertIn("attention marker", content)
         self.assertIn("<!-- attention: yes", content)
         self.assertIn("<!-- attention: no -->", content)
 
     def test_loop_prompt_preserves_child_report_links(self):
-        content = (_HERE / "LOOP-PROMPT.md").read_text()
+        content = (_PROMPTS_DIR / "LOOP-PROMPT.md").read_text()
         self.assertIn("Preserve child report links", content)
         self.assertIn("## Needs Attention", content)
 
@@ -3518,14 +3522,280 @@ class TestBasePromptHandling(unittest.TestCase):
 
         claude_script = claude_harness.launcher_script("T-001", "2026-01-01", 10.0, "analyze", None, "~/Work-Loop")
         self.assertIn("BASE-PROMPT.md", claude_script)
-        self.assertIn("${BASE_PROMPT}$(cat LOOP-PROMPT.md)", claude_script)
+        self.assertIn("${BASE_PROMPT}$(cat prompts/LOOP-PROMPT.md)", claude_script)
 
         opencode_script = opencode_harness.launcher_script("T-001", "2026-01-01", 10.0, "analyze", None, "~/Work-Loop")
         self.assertIn("BASE-PROMPT.md", opencode_script)
-        self.assertIn("${BASE_PROMPT}$(cat LOOP-PROMPT.md)", opencode_script)
+        self.assertIn("${BASE_PROMPT}$(cat prompts/LOOP-PROMPT.md)", opencode_script)
+
+
+# ---------------------------------------------------------------------------
+# JSON Log Parser & Unit Tests
+# ---------------------------------------------------------------------------
+
+class JsonLogParser:
+    """Parse opencode JSON-format logs and extract tool call sequences."""
+
+    def __init__(self, log_path: Path):
+        self.events: list[dict] = []
+        self.raw = log_path.read_text()
+        for line in self.raw.split("\n"):
+            line = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
+            if not line or not line.startswith("{"):
+                continue
+            try:
+                self.events.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+
+    def tool_calls(self) -> list[dict]:
+        """Return all tool_use events with tool name, args, and status."""
+        result = []
+        for e in self.events:
+            if e.get("type") != "tool_use":
+                continue
+            part = e.get("part", {})
+            state = part.get("state", {})
+            result.append({
+                "tool": part.get("tool", ""),
+                "input": state.get("input", {}),
+                "status": state.get("status", ""),
+            })
+        return result
+
+    def has_subagent_spawn(self, subagent_type: str) -> bool:
+        """Check if a task tool call spawned the given subagent."""
+        return any(
+            c["tool"] == "task"
+            and c["input"].get("subagent_type") == subagent_type
+            for c in self.tool_calls()
+        )
+
+    def has_no_subagent_spawn(self) -> bool:
+        """Check that no task tool calls were made."""
+        return not any(c["tool"] == "task" for c in self.tool_calls())
+
+    def has_file_edit(self, path_suffix: str) -> bool:
+        """Check if a file matching suffix was edited or written."""
+        for c in self.tool_calls():
+            if c["tool"] not in ("edit", "write"):
+                continue
+            fp = c["input"].get("filePath") or c["input"].get("file_path", "")
+            if path_suffix in fp:
+                return True
+        return False
+
+    def has_read(self, path_suffix: str) -> bool:
+        """Check if a file matching suffix was read."""
+        for c in self.tool_calls():
+            if c["tool"] != "read":
+                continue
+            fp = c["input"].get("filePath") or c["input"].get("file_path", "")
+            if path_suffix in fp:
+                return True
+        return False
+
+    def has_webfetch(self, url_prefix: str) -> bool:
+        """Check if a webfetch call targeted the given URL prefix."""
+        return any(
+            c["tool"] == "webfetch"
+            and c["input"].get("url", "").startswith(url_prefix)
+            for c in self.tool_calls()
+        )
+
+    def has_file_write_to(self, path_suffix: str) -> bool:
+        """Check if a write (not edit) was made to a path matching suffix."""
+        for c in self.tool_calls():
+            if c["tool"] != "write":
+                continue
+            fp = c["input"].get("filePath") or c["input"].get("file_path", "")
+            if path_suffix in fp:
+                return True
+        return False
+
+    def has_step_stop(self) -> bool:
+        """Final step_finish has reason='stop'."""
+        finishes = [e for e in self.events if e.get("type") == "step_finish"]
+        return finishes and finishes[-1]["part"].get("reason") == "stop"
+
+    def total_tool_calls(self) -> int:
+        return len(self.tool_calls())
+
+    def get_tool_names(self) -> list[str]:
+        return [c["tool"] for c in self.tool_calls()]
+
+
+class TestJsonLogParser(unittest.TestCase):
+    """Unit tests for the log parser — no harness needed."""
+
+    def test_parses_tool_use_events(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
+            f.write('{"type":"tool_use","part":{"tool":"read","state":{"input":{"filePath":"/tmp/test.md"},"status":"completed"}}}\n')
+            f.write('{"type":"step_finish","part":{"reason":"stop"}}\n')
+            f.flush()
+            parser = JsonLogParser(Path(f.name))
+        os.unlink(f.name)
+
+        calls = parser.tool_calls()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["tool"], "read")
+
+    def test_has_subagent_spawn(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
+            f.write('{"type":"tool_use","part":{"tool":"task","state":{"input":{"subagent_type":"critic","description":"Review"},"status":"completed"}}}\n')
+            f.flush()
+            parser = JsonLogParser(Path(f.name))
+        os.unlink(f.name)
+
+        self.assertTrue(parser.has_subagent_spawn("critic"))
+        self.assertFalse(parser.has_subagent_spawn("code-reviewer"))
+
+    def test_has_no_subagent_spawn(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
+            f.write('{"type":"tool_use","part":{"tool":"read","state":{"input":{"filePath":"/tmp/test.md"},"status":"completed"}}}\n')
+            f.flush()
+            parser = JsonLogParser(Path(f.name))
+        os.unlink(f.name)
+
+        self.assertTrue(parser.has_no_subagent_spawn())
+
+    def test_has_file_edit(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
+            f.write('{"type":"tool_use","part":{"tool":"edit","state":{"input":{"file_path":"/tmp/CONVERSATION.md"},"status":"completed"}}}\n')
+            f.flush()
+            parser = JsonLogParser(Path(f.name))
+        os.unlink(f.name)
+
+        self.assertTrue(parser.has_file_edit("CONVERSATION.md"))
+        self.assertFalse(parser.has_file_edit("WORK.md"))
+
+    def test_has_step_stop(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
+            f.write('{"type":"step_finish","part":{"reason":"tool-calls"}}\n')
+            f.write('{"type":"step_finish","part":{"reason":"stop"}}\n')
+            f.flush()
+            parser = JsonLogParser(Path(f.name))
+        os.unlink(f.name)
+
+        self.assertTrue(parser.has_step_stop())
+
+
+class TestAgentSync(unittest.TestCase):
+    """Verify .opencode/agents/ or .claude/agents/ is synced to workspace before harness runs."""
+
+    def test_agent_dir_copied_to_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            wl = WorkLoop({"work_dir": tmp, "harness": {"type": "opencode"}}, script_dir=_HERE)
+            work_opencode = tmp / ".opencode"
+            self.assertFalse(work_opencode.exists())
+
+            wl._sync_agent_dir(str(tmp))
+
+            self.assertTrue(work_opencode.exists())
+            self.assertTrue((work_opencode / "agents" / "critic.md").exists())
+            self.assertTrue((work_opencode / "agents" / "code-reviewer.md").exists())
+
+    def test_no_error_when_agent_dir_missing(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            fake_script_dir = tmp / "empty_repo"
+            fake_script_dir.mkdir()
+            wl = WorkLoop({"work_dir": tmp, "harness": {"type": "opencode"}}, script_dir=fake_script_dir)
+            # Should not raise
+            wl._sync_agent_dir(str(tmp))
+
+    def test_sync_overwrites_stale_agents(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            wl = WorkLoop({"work_dir": tmp, "harness": {"type": "opencode"}}, script_dir=_HERE)
+            stale_dir = tmp / ".opencode" / "agents"
+            stale_dir.mkdir(parents=True)
+            (stale_dir / "old-agent.md").write_text("stale")
+
+            wl._sync_agent_dir(str(tmp))
+
+            self.assertTrue((tmp / ".opencode" / "agents" / "critic.md").exists())
+            self.assertFalse((tmp / ".opencode" / "agents" / "old-agent.md").exists())
+
+
+class TestPromptLoading(unittest.TestCase):
+    """Verify correct prompt file is loaded for each mode."""
+
+    def _capture_prompt(self, wl: WorkLoop, item_id: str) -> str:
+        captured = [None]
+
+        def capture_run(prompt: str, *args, **kwargs):
+            captured[0] = prompt
+            log_file = kwargs.get("log_file") or args[3] if len(args) > 3 else None
+            if log_file:
+                log_file.write_text(
+                    '{"type":"step_finish","part":{"reason":"stop","tokens":{"total":100,"input":80,"output":20,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0}}\n'
+                )
+            return 0
+
+        original = wl.harness.run
+        wl.harness.run = capture_run
+        try:
+            wl.process_local(item_id, 10.0)
+        finally:
+            wl.harness.run = original
+        return captured[0]
+
+    def test_loop_prompt_for_ready(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            work_md = (
+                "# Work Loop\n\n"
+                "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
+                "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
+                "| ITEM-001 | [Test](ITEM-001/C.md) | local | ready |  |  |  |\n"
+            )
+            (tmp / "WORK.md").write_text(work_md)
+            (tmp / "ITEM-001").mkdir()
+            (tmp / "ITEM-001" / "CONVERSATION.md").write_text("Test")
+            wl = WorkLoop({"work_dir": tmp, "harness": {"type": "opencode"}}, script_dir=_HERE)
+            prompt = self._capture_prompt(wl, "ITEM-001")
+            self.assertIsNotNone(prompt)
+            self.assertIn("Multi-Agent", prompt)
+
+    def test_impl_prompt_for_implement(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            work_md = (
+                "# Work Loop\n\n"
+                "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
+                "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
+                "| ITEM-001 | [Test](ITEM-001/C.md) | local | implement |  |  |  |\n"
+            )
+            (tmp / "WORK.md").write_text(work_md)
+            (tmp / "ITEM-001").mkdir()
+            (tmp / "ITEM-001" / "CONVERSATION.md").write_text("work_dir: /tmp\n")
+            wl = WorkLoop({"work_dir": tmp, "harness": {"type": "opencode"}}, script_dir=_HERE)
+            prompt = self._capture_prompt(wl, "ITEM-001")
+            self.assertIsNotNone(prompt)
+            self.assertIn("Implementation Mode", prompt)
+
+    def test_resolve_prompt_for_resolved(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            work_md = (
+                "# Work Loop\n\n"
+                "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
+                "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
+                "| ITEM-001 | [Test](ITEM-001/C.md) | local | resolved |  |  |  |\n"
+            )
+            (tmp / "WORK.md").write_text(work_md)
+            (tmp / "ITEM-001").mkdir()
+            (tmp / "ITEM-001" / "CONVERSATION.md").write_text("Test")
+            wl = WorkLoop({"work_dir": tmp, "harness": {"type": "opencode"}}, script_dir=_HERE)
+            prompt = self._capture_prompt(wl, "ITEM-001")
+            self.assertIsNotNone(prompt)
+            self.assertIn("Resolved Mode", prompt)
 
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
 
 

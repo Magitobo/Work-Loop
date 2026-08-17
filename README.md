@@ -47,12 +47,13 @@ The loop runs indefinitely. Press `Ctrl+C` to stop.
 Work-Loop/                    ← scripts repo
 ├── run-loop.py               ← the loop script
 ├── config.json               ← harness + directory settings
-├── BASE-PROMPT.md            ← base execution rules (reasoning budget & fast-path)
-├── LOOP-PROMPT.md            ← prompt for analyze/ready/resolved items
-├── IMPL-PROMPT.md            ← prompt for implement items
-├── RESOLVE-PROMPT.md         ← prompt for resolved items (summary)
-├── UPDATE-RESEARCH-PROMPT.md ← prompt for research items (parent + child modes)
-├── TASK-PROMPT.md            ← prompt for child task agents
+├── prompts/                  ← prompt templates directory
+│   ├── BASE-PROMPT.md        ← base execution rules (reasoning budget & fast-path)
+│   ├── LOOP-PROMPT.md        ← prompt for analyze/ready/resolved items
+│   ├── IMPL-PROMPT.md        ← prompt for implement items
+│   ├── RESOLVE-PROMPT.md     ← prompt for resolved items (summary)
+│   ├── UPDATE-RESEARCH-PROMPT.md ← prompt for research items (parent + child modes)
+│   └── TASK-PROMPT.md        ← prompt for child task agents
 ├── .opencode/                ← OpenCode agent config + sub-agent definitions
 │   └── agents/               ← sub-agent definitions (verified-research.md, etc.)
 └── <work_dir>/               ← work items (path configured in config.json)
@@ -387,15 +388,15 @@ Background results are written to `e2e_results.log` and reported at the top of t
 
 ## Prompt Files
 
-Five prompt files control agent behavior. They are injected automatically based on the item's status:
+Prompt files live in the `prompts/` directory. They control agent behavior and are injected automatically based on the item's status:
 
 | File | Triggered By | Purpose |
 |---|---|---|
-| `LOOP-PROMPT.md` | `ready`, `analyze` | Multi-agent investigation with internal critic review + child agent management + verified-research sub-agent |
-| `IMPL-PROMPT.md` | `implement` | Code implementation with code review |
-| `RESOLVE-PROMPT.md` | `resolved` | Problem/resolution summary |
-| `UPDATE-RESEARCH-PROMPT.md` | `research`, child research | Fetch sources, compare against note, write updated note and summary (unified for parent and child modes) |
-| `TASK-PROMPT.md` | child task | Scan local files, propose actions (never executes), write note + task summary |
+| `prompts/LOOP-PROMPT.md` | `ready`, `analyze` | Multi-agent investigation with internal critic review + child agent management + verified-research sub-agent |
+| `prompts/IMPL-PROMPT.md` | `implement` | Code implementation with code review |
+| `prompts/RESOLVE-PROMPT.md` | `resolved` | Problem/resolution summary |
+| `prompts/UPDATE-RESEARCH-PROMPT.md` | `research`, child research | Fetch sources, compare against note, write updated note and summary (unified for parent and child modes) |
+| `prompts/TASK-PROMPT.md` | child task | Scan local files, propose actions (never executes), write note + task summary |
 Each prompt receives `ITEM_ID`, `WORK_LOOP_DIR`, and `ITEM_DIR` as variables. Research items also receive `topic`, `note_path`, `sources`, `research_context`, and `BACKLINK_TARGET`. Child agents additionally receive `PARENT_ID`, `PARENT_DIR`, and `run_id`. The consolidated `UPDATE-RESEARCH-PROMPT.md` handles both parent and child modes — child mode is detected by the presence of `PARENT_ID`.
 
 ### Sub-Agents

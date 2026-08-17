@@ -102,6 +102,8 @@ def _load_claude_agents() -> dict[str, Path]:
 # Prompt file discovery
 # ---------------------------------------------------------------------------
 
+_PROMPTS_DIR = _HERE / "prompts" if (_HERE / "prompts").is_dir() else _HERE
+
 _PROMPT_FILES = [
     "LOOP-PROMPT.md",
     "IMPL-PROMPT.md",
@@ -127,7 +129,7 @@ class TestSubagentReferences(unittest.TestCase):
     def test_prompt_files_exist(self):
         """All expected prompt files are present."""
         for name in _PROMPT_FILES:
-            p = _HERE / name
+            p = _PROMPTS_DIR / name
             self.assertTrue(p.is_file(), f"Prompt file missing: {name}")
 
     def test_all_subagent_refs_resolved(self):
@@ -135,7 +137,7 @@ class TestSubagentReferences(unittest.TestCase):
         all_agents = {**self.opencode_agents, **self.claude_agents}
 
         for prompt_name in _PROMPT_FILES:
-            prompt_path = _HERE / prompt_name
+            prompt_path = _PROMPTS_DIR / prompt_name
             if not prompt_path.is_file():
                 continue
 
@@ -154,7 +156,7 @@ class TestSubagentReferences(unittest.TestCase):
         """OpenCode agents that aren't referenced by any prompt are flagged."""
         all_refs: set[str] = set()
         for prompt_name in _PROMPT_FILES:
-            prompt_path = _HERE / prompt_name
+            prompt_path = _PROMPTS_DIR / prompt_name
             if not prompt_path.is_file():
                 continue
             all_refs.update(_find_subagent_refs(prompt_path.read_text()))
@@ -226,26 +228,26 @@ class TestCriticPromptIntegration(unittest.TestCase):
     """Verify LOOP-PROMPT.md correctly invokes the critic subagent."""
 
     def test_loop_prompt_spawns_critic(self):
-        prompt = (_HERE / "LOOP-PROMPT.md").read_text()
+        prompt = (_PROMPTS_DIR / "LOOP-PROMPT.md").read_text()
         self.assertIn('subagent_type="critic"', prompt,
                        "LOOP-PROMPT must spawn critic subagent")
 
     def test_loop_prompt_passes_item_dir(self):
         """Critic spawn instruction must include ITEM_DIR."""
-        prompt = (_HERE / "LOOP-PROMPT.md").read_text()
+        prompt = (_PROMPTS_DIR / "LOOP-PROMPT.md").read_text()
         # The spawn block should reference ITEM_DIR
         self.assertIn("ITEM_DIR", prompt,
                        "LOOP-PROMPT must pass ITEM_DIR to subagent")
 
     def test_loop_prompt_passes_draft(self):
         """Critic spawn instruction must include the DRAFT content."""
-        prompt = (_HERE / "LOOP-PROMPT.md").read_text()
+        prompt = (_PROMPTS_DIR / "LOOP-PROMPT.md").read_text()
         self.assertIn("DRAFT", prompt,
                        "LOOP-PROMPT must pass DRAFT to critic")
 
     def test_loop_prompt_step3_references_critic_output(self):
         """Step 3 must tell the agent to read Critic output."""
-        prompt = (_HERE / "LOOP-PROMPT.md").read_text()
+        prompt = (_PROMPTS_DIR / "LOOP-PROMPT.md").read_text()
         m = re.search(r"## Step 3\s+—", prompt, re.IGNORECASE)
         self.assertIsNotNone(m, "Prompt must have a Step 3 section")
         # Extract text from Step 3 to next ## header
@@ -279,6 +281,6 @@ class TestCodeReviewerAgentDefinition(unittest.TestCase):
         self.assertEqual(fm.get("permission.bash"), "allow")
 
     def test_impl_prompt_spawns_code_reviewer(self):
-        prompt = (_HERE / "IMPL-PROMPT.md").read_text()
+        prompt = (_PROMPTS_DIR / "IMPL-PROMPT.md").read_text()
         self.assertIn('subagent_type="code-reviewer"', prompt,
                        "IMPL-PROMPT must spawn code-reviewer subagent")
