@@ -145,7 +145,9 @@ class ClaudeHarness(Harness):
             f"cd {remote_work_dir}\n"
             f"mkdir -p {item_id}/_logs\n"
             f"{rwd_capture}"
-            f'PROMPT="$(cat {prompt_file})"{extra_vars}\n'
+            'BASE_PROMPT=""\n'
+            '[ -f BASE-PROMPT.md ] && BASE_PROMPT="$(cat BASE-PROMPT.md)"$\'\\n\\n\'\n'
+            f'PROMPT="${{BASE_PROMPT}}$(cat {prompt_file})"{extra_vars}\n'
             f"{cd_work}"
             f'claude --print --permission-mode auto --max-budget-usd {budget} {debug_flag}"$PROMPT" {log_redir} &\n'
             f'echo $! > {done_dir}/{item_id}/.pid\n'
@@ -327,7 +329,9 @@ class OpenCodeHarness(Harness):
             f"cd {remote_work_dir}\n"
             f"mkdir -p {item_id}/_logs\n"
             f"{rwd_capture}"
-            f'PROMPT="$(cat {prompt_file})"{extra_vars}\n'
+            'BASE_PROMPT=""\n'
+            '[ -f BASE-PROMPT.md ] && BASE_PROMPT="$(cat BASE-PROMPT.md)"$\'\\n\\n\'\n'
+            f'PROMPT="${{BASE_PROMPT}}$(cat {prompt_file})"{extra_vars}\n'
             f"{cd_work}"
             f'opencode run --auto --format json --title {item_id} {model_arg}"$PROMPT" {log_redir} &\n'
             f'echo $! > {done_dir}/{item_id}/.pid\n'
@@ -411,10 +415,19 @@ class WorkLoop:
         work_loop_instance = self
 
         # Prompt files — harness type determines agent dir but prompts stay the same
+        self.base_prompt_file = self.script_dir / "BASE-PROMPT.md"
         self.prompt_file = self.script_dir / "LOOP-PROMPT.md"
         self.impl_prompt_file = self.script_dir / "IMPL-PROMPT.md"
         self.resolve_prompt_file = self.script_dir / "RESOLVE-PROMPT.md"
         self.child_research_prompt_file = self.script_dir / "UPDATE-RESEARCH-PROMPT.md"
+
+    def _read_base_prompt(self) -> str:
+        """Return content of BASE-PROMPT.md with trailing newlines, or empty string if missing."""
+        if hasattr(self, 'base_prompt_file') and self.base_prompt_file.exists():
+            text = self.base_prompt_file.read_text().strip()
+            if text:
+                return text + "\n\n"
+        return ""
 
     # -------------------------------------------------------------------------
     # WORK.md I/O
@@ -794,6 +807,7 @@ class WorkLoop:
 
             item_dir = str(self.work_dir / item_id)
             prompt = (
+                f"{self._read_base_prompt()}"
                 f"{prompt_text}\n\n"
                 f"title: {config.get('title', '')}\n"
                 f"note_path: {config.get('note_path', '')}\n"
@@ -827,6 +841,7 @@ class WorkLoop:
         if mode != "research":
             item_dir = str(self.work_dir / item_id)
             prompt = (
+                f"{self._read_base_prompt()}"
                 f"{prompt_text}\n\n"
                 f"ITEM_ID: {item_id}\n"
                 f"WORK_LOOP_DIR: {self.work_dir}\n"
@@ -905,6 +920,9 @@ class WorkLoop:
         item_dir = self.work_dir / item_id
         _run(["rsync", "-avz", "--delete", "--exclude=.done", f"{item_dir}/", f"{remote_host}:{rwd}/{item_id}/"])
         _run(["rsync", "-avz", str(self.prompt_file), f"{remote_host}:{rwd}/"])
+
+        if self.base_prompt_file.exists():
+            _run(["rsync", "-avz", str(self.base_prompt_file), f"{remote_host}:{rwd}/"])
 
         if mode == "implement":
             impl_prompt_file = self.script_dir / "IMPL-PROMPT.md"
@@ -1687,6 +1705,7 @@ class WorkLoop:
         parent_dir = str(self.work_dir / parent_id)
         item_dir = str(child_dir)
         prompt = (
+            f"{self._read_base_prompt()}"
             f"{prompt_text}\n\n"
             f"title: {config.get('title', '')}\n"
             f"note_path: {config.get('note_path', '')}\n"

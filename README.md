@@ -47,6 +47,7 @@ The loop runs indefinitely. Press `Ctrl+C` to stop.
 Work-Loop/                    ← scripts repo
 ├── run-loop.py               ← the loop script
 ├── config.json               ← harness + directory settings
+├── BASE-PROMPT.md            ← base execution rules (reasoning budget & fast-path)
 ├── LOOP-PROMPT.md            ← prompt for analyze/ready/resolved items
 ├── IMPL-PROMPT.md            ← prompt for implement items
 ├── RESOLVE-PROMPT.md         ← prompt for resolved items (summary)

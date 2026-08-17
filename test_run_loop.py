@@ -52,8 +52,28 @@ def _can_reach_remote(host: str) -> bool:
 REMOTE_AVAILABLE = _can_reach_remote(REMOTE_HOST)
 
 # ---------------------------------------------------------------------------
-# Sample WORK.md fixture
+# WORK.md Table Header and Fixtures
 # ---------------------------------------------------------------------------
+
+TABLE_HEADER = (
+    "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
+    "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
+)
+
+
+def make_work_md(active_rows: str = "", done_rows: str = "") -> str:
+    """Helper to build a standard WORK.md string with active and done sections."""
+    active_section = f"{active_rows}\n" if active_rows and not active_rows.endswith("\n") else active_rows
+    done_section = f"{done_rows}\n" if done_rows and not done_rows.endswith("\n") else done_rows
+    return (
+        f"# Work Loop\n\n"
+        f"{TABLE_HEADER}"
+        f"{active_section}\n"
+        f"## Done\n\n"
+        f"{TABLE_HEADER}"
+        f"{done_section}"
+    )
+
 
 SAMPLE_WORK_MD = """\
 # Work Loop
@@ -289,15 +309,7 @@ class TestLauncherScriptImplementMode(unittest.TestCase):
 class TestDispatchRemoteMode(unittest.TestCase):
 
     def _make_wl_with_conv(self, tmp: str, mode: str, work_dir_line: str = "") -> WorkLoop:
-        content = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            f"| MY-ITEM | Task | user@host | {mode} |  |  |  |\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        )
+        content = make_work_md(f"| MY-ITEM | Task | user@host | {mode} |  |  |  |")
         wl = _make_workloop(tmp, content)
         (Path(tmp) / "IMPL-PROMPT.md").write_text("Implement.\n")
         item_dir = Path(tmp) / "MY-ITEM"
@@ -394,15 +406,7 @@ class TestRunModeRouting(unittest.TestCase):
     """run() must read mode before overwriting status and forward it to dispatch_remote."""
 
     def _make_wl(self, status: str) -> WorkLoop:
-        content = (
-            "# Work Loop\n\n"
-            "| ID      | Title | Location    | Status | Last Updated | Budget | Log |\n"
-            "| ------- | ----- | ----------- | ------ | ------------ | ------ | --- |\n"
-            f"| MY-ITEM | Task  | user@remote | {status} |  |  |  |\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        )
+        content = make_work_md(f"| MY-ITEM | Task | user@remote | {status} |  |  |  |")
         return _make_workloop(tempfile.mkdtemp(), content)
 
     def _dispatched_mode(self, wl: WorkLoop) -> str | None:
@@ -492,16 +496,7 @@ class TestTriggerStatuses(unittest.TestCase):
             f"| {item_id} | [{item_id}]({item_id}/C.md) | local | {status} |  |  |  |"
             for item_id, status in statuses.items()
         )
-        content = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            f"{rows}\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        )
-        return _make_workloop(tempfile.mkdtemp(), content)
+        return _make_workloop(tempfile.mkdtemp(), make_work_md(rows))
 
     def test_ready_still_triggers(self):
         wl = self._make_wl_with_statuses({"A": "ready"})
@@ -617,15 +612,7 @@ class TestStubWorkMd(unittest.TestCase):
 class TestAutoInitConversation(unittest.TestCase):
 
     def _make_wl_with_plain_title(self, tmp_dir: str) -> WorkLoop:
-        content = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            "| MY-ITEM | Kick off the thing | local | ready |  |  |  |\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        )
+        content = make_work_md("| MY-ITEM | Kick off the thing | local | ready |  |  |  |")
         return _make_workloop(tmp_dir, content)
 
     def test_creates_conversation_md_when_missing(self):
@@ -644,15 +631,7 @@ class TestAutoInitConversation(unittest.TestCase):
 
     def test_strips_link_syntax_from_title(self):
         with tempfile.TemporaryDirectory() as tmp:
-            content = (
-                "# Work Loop\n\n"
-                "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-                "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-                "| MY-ITEM | [Linked title](MY-ITEM/CONVERSATION.md) | local | ready |  |  |  |\n\n"
-                "## Done\n\n"
-                "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-                "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            )
+            content = make_work_md("| MY-ITEM | [Linked title](MY-ITEM/CONVERSATION.md) | local | ready |  |  |  |")
             wl = _make_workloop(tmp, content)
             wl._auto_init_conversation("MY-ITEM")
             text = (Path(tmp) / "MY-ITEM" / "CONVERSATION.md").read_text()
@@ -681,25 +660,8 @@ class TestAutoInitConversation(unittest.TestCase):
 class TestRemoteTitleReadback(unittest.TestCase):
     """wait_for_remote() should read back Claude's concise title from remote WORK.md."""
 
-    WORK_MD = (
-        "# Work Loop\n\n"
-        "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-        "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        "| MY-ITEM | Original long prompt text | remote-host | in-progress |  |  |  |\n\n"
-        "## Done\n\n"
-        "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-        "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-    )
-
-    REMOTE_WORK_MD = (
-        "# Work Loop\n\n"
-        "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-        "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        "| MY-ITEM | [Concise title](MY-ITEM/CONVERSATION.md) | local | needs-review |  |  |  |\n\n"
-        "## Done\n\n"
-        "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-        "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-    )
+    WORK_MD = make_work_md("| MY-ITEM | Original long prompt text | remote-host | in-progress |  |  |  |")
+    REMOTE_WORK_MD = make_work_md("| MY-ITEM | [Concise title](MY-ITEM/CONVERSATION.md) | local | needs-review |  |  |  |")
 
     def _make_wl(self, tmp: str) -> WorkLoop:
         wl = _make_workloop(tmp, self.WORK_MD)
@@ -773,16 +735,7 @@ class TestGetInprogressRemoteItems(unittest.TestCase):
             f"| {id_} | [{id_}]({id_}/C.md) | {loc} | {status} |  |  |  |"
             for id_, loc, status in rows
         )
-        content = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            f"{row_lines}\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        )
-        return _make_workloop(tempfile.mkdtemp(), content)
+        return _make_workloop(tempfile.mkdtemp(), make_work_md(row_lines))
 
     def test_returns_in_progress_remote_item(self):
         wl = self._make_wl([("ITEM-A", "user@remote-host", "in-progress")])
@@ -800,15 +753,9 @@ class TestGetInprogressRemoteItems(unittest.TestCase):
         self.assertEqual(wl.get_inprogress_remote_items(), [])
 
     def test_excludes_done_section(self):
-        content = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            "| ITEM-A | [A](A/C.md) | local | ready |  |  |  |\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            "| ITEM-B | [B](B/C.md) | user@host | in-progress |  |  |  |\n"
+        content = make_work_md(
+            active_rows="| ITEM-A | [A](A/C.md) | local | ready |  |  |  |",
+            done_rows="| ITEM-B | [B](B/C.md) | user@host | in-progress |  |  |  |",
         )
         wl = _make_workloop(tempfile.mkdtemp(), content)
         self.assertEqual(wl.get_inprogress_remote_items(), [])
@@ -834,15 +781,7 @@ class TestTsStrFromLogCol(unittest.TestCase):
     TS = "2026-06-04_17-43-49"
 
     def _make_wl(self, item_id: str, log_col: str) -> WorkLoop:
-        content = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            f"| {item_id} | [{item_id}]({item_id}/C.md) | user@host | in-progress |  | $10.0 | {log_col} |\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        )
+        content = make_work_md(f"| {item_id} | [{item_id}]({item_id}/C.md) | user@host | in-progress |  | $10.0 | {log_col} |")
         return _make_workloop(tempfile.mkdtemp(), content)
 
     def test_extracts_from_log_col(self):
@@ -918,24 +857,18 @@ class TestClassifyFailure(unittest.TestCase):
 class TestSyncBackRemote(unittest.TestCase):
 
     TS = "2026-06-04_10-00-00"
-    WORK_MD = (
-        "# Work Loop\n\n"
-        "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-        "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
+    WORK_MD = make_work_md(
         "| MY-ITEM | Original title | user@host | in-progress |  | $10.0 |"
-        " [Log](_logs/2026-06-04_10-00-00_MY-ITEM.log) |\n\n"
-        "## Done\n\n"
-        "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-        "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
+        " [Log](MY-ITEM/_logs/2026-06-04_10-00-00_MY-ITEM.log) |"
     )
 
     def _make_wl(self, tmp: str, log_content: str | None = None) -> WorkLoop:
         wl = _make_workloop(tmp, self.WORK_MD)
         item_dir = Path(tmp) / "MY-ITEM"
-        item_dir.mkdir()
+        item_dir.mkdir(exist_ok=True)
         (item_dir / "CONVERSATION.md").write_text("## 2026-01-01 | Claude\n\nFindings\n")
-        log_dir = Path(tmp) / "_logs"
-        log_dir.mkdir(exist_ok=True)
+        log_dir = item_dir / "_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
         if log_content is not None:
             (log_dir / f"{self.TS}_MY-ITEM.log").write_text(log_content)
         return wl
@@ -986,6 +919,20 @@ class TestSyncBackRemote(unittest.TestCase):
             self.assertIn("FAILED", wl.get_col("MY-ITEM", COL_BUDGET))
             self.assertNotIn("EXCEEDED", wl.get_col("MY-ITEM", COL_BUDGET))
 
+    def test_budget_exceeded_on_budget_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp, log_content="Error: budget limit exceeded for session")
+            self._run_sync(wl, "1")
+            self.assertEqual(wl.get_col("MY-ITEM", COL_STATUS), "needs-review")
+            self.assertEqual(wl.get_col("MY-ITEM", COL_BUDGET), "$10.0 - EXCEEDED")
+
+    def test_budget_failed_on_unknown_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp, log_content="Fatal error: segmentation fault")
+            self._run_sync(wl, "1")
+            self.assertEqual(wl.get_col("MY-ITEM", COL_STATUS), "needs-review")
+            self.assertEqual(wl.get_col("MY-ITEM", COL_BUDGET), "$10.0 - FAILED")
+
     def test_log_col_set_to_ts_and_item(self):
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl(tmp)
@@ -1000,16 +947,14 @@ class TestSyncBackRemote(unittest.TestCase):
             self._run_sync(wl, "0")
             self.assertNotEqual(wl.get_col("MY-ITEM", COL_LAST_UPDATED), "")
 
+    def test_last_updated_set_on_completion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp)
+            self._run_sync(wl, "0")
+            self.assertNotEqual(wl.get_col("MY-ITEM", COL_LAST_UPDATED), "")
+
     def test_remote_title_captured(self):
-        remote_wmd = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            "| MY-ITEM | [Concise title](MY-ITEM/CONVERSATION.md) | local | needs-review |  |  |  |\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        )
+        remote_wmd = make_work_md("| MY-ITEM | [Concise title](MY-ITEM/CONVERSATION.md) | local | needs-review |  |  |  |")
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl(tmp)
             self._run_sync(wl, "0", remote_wmd=remote_wmd)
@@ -1044,15 +989,7 @@ class TestCheckStalledRemotes(unittest.TestCase):
     def _make_wl(self, tmp: str, log_col: str | None = None) -> WorkLoop:
         if log_col is None:
             log_col = f"[Log](_logs/{self.TS}_MY-ITEM.log)"
-        content = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            f"| MY-ITEM | [Task](MY-ITEM/C.md) | user@host | in-progress |  | $10.0 | {log_col} |\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        )
+        content = make_work_md(f"| MY-ITEM | [Task](MY-ITEM/C.md) | user@host | in-progress |  | $10.0 | {log_col} |")
         wl = _make_workloop(tmp, content)
         item_dir = Path(tmp) / "MY-ITEM"
         item_dir.mkdir()
@@ -2618,15 +2555,11 @@ sources:
 class TestResearchScheduledItems(unittest.TestCase):
 
     def test_get_scheduled_items_includes_research(self):
-        content = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            "| SI-001 | [Script](SI-001/C.md) | local | scheduled |  |  |  |\n"
-            "| RES-001 | [Research](RES-001/C.md) | local | scheduled |  |  |  |\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
+        content = make_work_md(
+            active_rows=(
+                "| SI-001 | [Script](SI-001/C.md) | local | scheduled |  |  |  |\n"
+                "| RES-001 | [Research](RES-001/C.md) | local | scheduled |  |  |  |"
+            )
         )
         tmp = tempfile.mkdtemp()
         p = Path(tmp)
@@ -2666,15 +2599,7 @@ class TestResearchFallbackPrompt(unittest.TestCase):
 
     def test_research_uses_loop_prompt_when_research_prompt_missing(self):
         """When UPDATE-RESEARCH-PROMPT.md doesn't exist, process_local falls back to LOOP-PROMPT.md."""
-        content = (
-            "# Work Loop\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-            "| RES-001 | [Research](RES-001/C.md) | local | research |  |  |  |\n\n"
-            "## Done\n\n"
-            "| ID | Title | Location | Status | Last Updated | Budget | Log |\n"
-            "| -- | ----- | -------- | ------ | ------------ | ------ | --- |\n"
-        )
+        content = make_work_md("| RES-001 | [Research](RES-001/C.md) | local | research |  |  |  |")
         tmp = tempfile.mkdtemp()
         p = Path(tmp)
         (p / "WORK.md").write_text(content)
@@ -3543,5 +3468,64 @@ class TestChildAttentionPrompts(unittest.TestCase):
         self.assertIn("## Needs Attention", content)
 
 
+class TestBasePromptHandling(unittest.TestCase):
+
+    def _make_wl(self, tmp, with_base=True):
+        p = Path(tmp)
+        (p / "WORK.md").write_text(make_work_md("| T-001 | [Test](T-001/CONVERSATION.md) | local | ready |  |  |  |"))
+        (p / "LOOP-PROMPT.md").write_text("Execute loop task.\n")
+        if with_base:
+            (p / "BASE-PROMPT.md").write_text("## Reasoning Budget: Medium\nKeep it short.\n")
+        item_dir = p / "T-001"
+        item_dir.mkdir(parents=True, exist_ok=True)
+        (item_dir / "CONVERSATION.md").write_text("## 2026-01-01 | User\n\nTest prompt\n")
+
+        cfg = {"work_dir": p, "harness": {"type": "opencode", "max_budget_usd": 10.00}, "remote": {"work_dir": "~/Work-Loop"}}
+        wl = WorkLoop(cfg)
+        wl.script_dir = p
+        wl.prompt_file = p / "LOOP-PROMPT.md"
+        wl.base_prompt_file = p / "BASE-PROMPT.md"
+        return wl
+
+    def test_read_base_prompt_when_file_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp, with_base=True)
+            self.assertEqual(wl._read_base_prompt(), "## Reasoning Budget: Medium\nKeep it short.\n\n")
+
+    def test_read_base_prompt_when_file_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp, with_base=False)
+            self.assertEqual(wl._read_base_prompt(), "")
+
+    def test_process_local_prepends_base_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp, with_base=True)
+            captured_prompts = []
+
+            def mock_run_harness(prompt, log_file, budget, cwd=None, item_id=None):
+                captured_prompts.append(prompt)
+                return 0
+
+            with unittest.mock.patch.object(wl, "_run_harness", side_effect=mock_run_harness):
+                wl.process_local("T-001", 10.0)
+
+            self.assertEqual(len(captured_prompts), 1)
+            self.assertTrue(captured_prompts[0].startswith("## Reasoning Budget: Medium\nKeep it short.\n\nExecute loop task."))
+
+    def test_build_launcher_contains_base_prompt_handling(self):
+        claude_harness = run_loop.ClaudeHarness()
+        opencode_harness = run_loop.OpenCodeHarness()
+
+        claude_script = claude_harness.launcher_script("T-001", "2026-01-01", 10.0, "analyze", None, "~/Work-Loop")
+        self.assertIn("BASE-PROMPT.md", claude_script)
+        self.assertIn("${BASE_PROMPT}$(cat LOOP-PROMPT.md)", claude_script)
+
+        opencode_script = opencode_harness.launcher_script("T-001", "2026-01-01", 10.0, "analyze", None, "~/Work-Loop")
+        self.assertIn("BASE-PROMPT.md", opencode_script)
+        self.assertIn("${BASE_PROMPT}$(cat LOOP-PROMPT.md)", opencode_script)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+

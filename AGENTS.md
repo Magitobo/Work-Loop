@@ -14,6 +14,7 @@ MyNotebook/
 │   ├── run-loop.py
 │   ├── test_run_loop.py
 │   ├── config.json         ← harness, work_dir, budget settings
+│   ├── BASE-PROMPT.md      ← base execution rules (reasoning budget, fast-path) prepended to all prompts
 │   ├── LOOP-PROMPT.md      ← prompt for analyze/ready/resolved items
 │   ├── IMPL-PROMPT.md      ← prompt for implement items
 │   ├── RESOLVE-PROMPT.md   ← prompt for resolved items
@@ -45,6 +46,7 @@ MyNotebook/
 | `run-loop.py` | The loop script — `WorkLoop` class + `main()` + harness implementations |
 | `config.json` | Harness type, work_dir, model, budget, remote settings |
 | `../Work-Loop-Items/WORK.md` | The work item table (source of truth for status) |
+| `BASE-PROMPT.md` | Base execution rules (reasoning budget & fast-path) prepended to all prompts |
 | `LOOP-PROMPT.md` | Prompt injected for `analyze`/`ready`/`resolved` items |
 | `IMPL-PROMPT.md` | Prompt injected for `implement` items |
 | `RESOLVE-PROMPT.md` | Prompt injected for `resolved` items (summarize problem/resolution) |
