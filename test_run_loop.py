@@ -3823,6 +3823,287 @@ class TestPromptLoading(unittest.TestCase):
             self.assertIn("Resolved Mode", prompt)
 
 
+# ---------------------------------------------------------------------------
+# TestOutlineWorkFormat & TestInNoteActionCenter
+# ---------------------------------------------------------------------------
+
+SAMPLE_WORK_NEW_MD = """\
+# Work Loop
+
+## How to use
+
+### Status Values
+- `ready` / `analyze` — Analysis agent
+- `implement` — Implementation agent
+- `resolved` — Summarizes final problem and resolution
+- `abort` — Kills running job immediately
+
+## Active Items
+
+- [ ] [Task one](ITEM-001/CONVERSATION.md) · `status: ready` · [Log](ITEM-001/_logs/log1.log) · `ITEM-001`
+- [ ] [Task two](ITEM-002/CONVERSATION.md) · `status: needs-review` · [Log](ITEM-002/_logs/log2.log) · `ITEM-002`
+- [ ] [Task three](ITEM-003/CONVERSATION.md) · `status: waiting` · `ITEM-003`
+
+## Add New Item
+- [ ] Explore Canadian banking options
+
+## Done
+
+- [x] [Old task](ITEM-000/CONVERSATION.md) · [Log](ITEM-000/_logs/old.log) · `ITEM-000`
+"""
+
+
+class TestOutlineWorkFormat(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.work_dir = Path(self.tmp)
+        (self.work_dir / "WORK-NEW.md").write_text(SAMPLE_WORK_NEW_MD)
+        (self.work_dir / "LOOP-PROMPT.md").write_text("Do the work.\n")
+        cfg = {"work_dir": self.work_dir, "work_file": "WORK-NEW.md", "harness": {"type": "claude", "max_budget_usd": 10.00}}
+        self.wl = WorkLoop(cfg)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_is_outline_format(self):
+        self.assertTrue(self.wl._is_outline_format())
+
+    def test_get_ready_items_outline(self):
+        items = self.wl.get_ready_items()
+        self.assertEqual(items, ["ITEM-001"])
+
+    def test_get_col_outline(self):
+        self.assertEqual(self.wl.get_col("ITEM-001", COL_STATUS), "ready")
+        self.assertEqual(self.wl.get_col("ITEM-002", COL_STATUS), "needs-review")
+        self.assertEqual(self.wl.get_col("ITEM-003", COL_BUDGET), "$10.0")
+        self.assertEqual(self.wl.get_col("ITEM-001", COL_LOCATION), "local")
+
+    def test_update_col_outline_status(self):
+        self.wl.update_col("ITEM-001", COL_STATUS, "in-progress")
+        self.assertEqual(self.wl.get_col("ITEM-001", COL_STATUS), "in-progress")
+        self.assertEqual(self.wl.get_col("ITEM-002", COL_STATUS), "needs-review")
+
+    def test_update_col_outline_done_moves_to_done(self):
+        self.wl.update_col("ITEM-001", COL_STATUS, "done")
+        self.assertNotIn("ITEM-001", self.wl.get_ready_items())
+        text = (self.work_dir / "WORK-NEW.md").read_text()
+        self.assertIn("## Done", text)
+        self.assertIn("ITEM-001", text)
+
+    def test_get_new_items_and_initialize_outline(self):
+        new_items = self.wl.get_new_items()
+        self.assertEqual(len(new_items), 1)
+        item_id = new_items[0]
+        self.wl.initialize_new_item(item_id)
+        conv_file = self.work_dir / item_id / "CONVERSATION.md"
+        self.assertTrue(conv_file.exists())
+        conv_text = conv_file.read_text()
+        self.assertIn("> [!action] **Work-Loop Action Center**", conv_text)
+        self.assertIn("Explore Canadian banking options", conv_text)
+        work_text = (self.work_dir / "WORK-NEW.md").read_text()
+        self.assertIn(item_id, work_text)
+
+    def test_outline_action_checkbox_trigger(self):
+        # Test clicking the main item checkbox: - [x] [Task two]...
+        text = (self.work_dir / "WORK-NEW.md").read_text()
+        text = text.replace("- [ ] [Task two]", "- [x] [Task two]")
+        (self.work_dir / "WORK-NEW.md").write_text(text)
+        ready_items = self.wl.get_ready_items()
+        self.assertIn("ITEM-002", ready_items)
+        new_text = (self.work_dir / "WORK-NEW.md").read_text()
+        self.assertIn("- [ ] [Task two]", new_text)
+        self.assertEqual(self.wl.get_col("ITEM-002", COL_STATUS), "ready")
+
+    def test_insert_and_remove_work_row_outline(self):
+        self.wl.insert_work_row("ITEM-099", "New test row", "local")
+        self.assertEqual(self.wl.get_col("ITEM-099", COL_STATUS), "ready")
+        self.wl.remove_work_row("ITEM-099")
+class TestStreamlinedTableWorkFormat(unittest.TestCase):
+    SAMPLE_TABLE_WORK_MD = """\
+# Work Loop
+
+## How to use
+
+### Status Values
+- ready / analyze — Analysis agent
+- implement — Implementation agent
+- resolved — Summarizes final problem and resolution
+
+## Active Items
+
+| Task / Conversation | Status | Last Updated | Log | ID |
+|---|:---:|:---:|:---:|---|
+| [Task one](ITEM-001/CONVERSATION.md) | ready | 2026-08-01 | [Log](ITEM-001/_logs/log1.log) | ITEM-001 |
+| [Task two](ITEM-002/CONVERSATION.md) | needs-review | 2026-08-02 | [Log](ITEM-002/_logs/log2.log) | ITEM-002 |
+
+## Add New Item
+- [ ] Explore Canadian banking options
+
+## Done
+
+| Task / Conversation | Last Updated | Log | ID |
+|---|:---:|:---:|---|
+| [Old task](ITEM-000/CONVERSATION.md) | 2026-07-14 | [Log](ITEM-000/_logs/old.log) | ITEM-000 |
+"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.work_dir = Path(self.tmp)
+        (self.work_dir / "WORK-NEW.md").write_text(self.SAMPLE_TABLE_WORK_MD)
+        (self.work_dir / "LOOP-PROMPT.md").write_text("Do the work.\n")
+        cfg = {"work_dir": self.work_dir, "work_file": "WORK-NEW.md", "harness": {"type": "claude", "max_budget_usd": 10.00}}
+        self.wl = WorkLoop(cfg)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_get_ready_items_table(self):
+        items = self.wl.get_ready_items()
+        self.assertEqual(items, ["ITEM-001"])
+
+    def test_get_col_table(self):
+        self.assertEqual(self.wl.get_col("ITEM-001", COL_STATUS), "ready")
+        self.assertEqual(self.wl.get_col("ITEM-002", COL_STATUS), "needs-review")
+        self.assertEqual(self.wl.get_col("ITEM-001", COL_LAST_UPDATED), "2026-08-01")
+        self.assertEqual(self.wl.get_col("ITEM-001", COL_ID), "ITEM-001")
+
+    def test_update_col_table_status(self):
+        self.wl.update_col("ITEM-001", COL_STATUS, "in-progress")
+        self.assertEqual(self.wl.get_col("ITEM-001", COL_STATUS), "in-progress")
+
+    def test_update_col_table_last_updated(self):
+        self.wl.update_col("ITEM-001", COL_LAST_UPDATED, "2026-08-18")
+        self.assertEqual(self.wl.get_col("ITEM-001", COL_LAST_UPDATED), "2026-08-18")
+
+    def test_table_move_to_done(self):
+        self.wl.update_col("ITEM-001", COL_STATUS, "done")
+        text = (self.work_dir / "WORK-NEW.md").read_text()
+        self.assertIn("[Task one]", text)
+        self.assertIn("ITEM-001", text)
+
+
+class TestInNoteActionCenter(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.work_dir = Path(self.tmp)
+        (self.work_dir / "WORK-NEW.md").write_text(SAMPLE_WORK_NEW_MD)
+        (self.work_dir / "LOOP-PROMPT.md").write_text("Do the work.\n")
+        cfg = {"work_dir": self.work_dir, "work_file": "WORK-NEW.md", "harness": {"type": "claude", "max_budget_usd": 10.00}}
+        self.wl = WorkLoop(cfg)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_in_note_continue_analyze_triggers_ready(self):
+        item_dir = self.work_dir / "ITEM-002"
+        item_dir.mkdir(parents=True, exist_ok=True)
+        conv = (
+            "> [!action] **Work-Loop Action Center**\n"
+            "> Status: `needs-review` | Budget: `$10.0` | Last Run: 2026-08-17 22:04\n"
+            "> - [x] **Continue Analyze**\n"
+            "> - [ ] **Run Implement**\n"
+            "> - [ ] **Mark Resolved (Move to Done)**\n"
+            "> - [ ] **Abort**\n\n"
+            "## 2026-08-17 | AI Agent\nSome findings\n"
+        )
+        (item_dir / "CONVERSATION.md").write_text(conv)
+        ready_items = self.wl.get_ready_items()
+        self.assertIn("ITEM-002", ready_items)
+        self.assertEqual(self.wl.get_col("ITEM-002", COL_STATUS), "ready")
+        conv_after = (item_dir / "CONVERSATION.md").read_text()
+        self.assertIn("> - [ ] **Continue Analyze**", conv_after)
+        self.assertIn("Status: `ready`", conv_after)
+
+    def test_in_note_run_implement_triggers_implement(self):
+        item_dir = self.work_dir / "ITEM-002"
+        item_dir.mkdir(parents=True, exist_ok=True)
+        conv = (
+            "> [!action] **Work-Loop Action Center**\n"
+            "> Status: `needs-review` | Budget: `$10.0` | Last Run: 2026-08-17 22:04\n"
+            "> - [ ] **Continue Analyze**\n"
+            "> - [x] **Run Implement**\n"
+            "> - [ ] **Mark Resolved (Move to Done)**\n"
+            "> - [ ] **Abort**\n\n"
+            "## 2026-08-17 | AI Agent\nSome findings\n"
+        )
+        (item_dir / "CONVERSATION.md").write_text(conv)
+        ready_items = self.wl.get_ready_items()
+        self.assertIn("ITEM-002", ready_items)
+        self.assertEqual(self.wl.get_col("ITEM-002", COL_STATUS), "implement")
+
+    def test_in_note_mark_resolved_triggers_resolved(self):
+        item_dir = self.work_dir / "ITEM-002"
+        item_dir.mkdir(parents=True, exist_ok=True)
+        conv = (
+            "> [!action] **Work-Loop Action Center**\n"
+            "> Status: `needs-review` | Budget: `$10.0` | Last Run: 2026-08-17 22:04\n"
+            "> - [ ] **Continue Analyze**\n"
+            "> - [ ] **Run Implement**\n"
+            "> - [x] **Mark Resolved (Move to Done)**\n"
+            "> - [ ] **Abort**\n\n"
+            "## 2026-08-17 | AI Agent\nSome findings\n"
+        )
+        (item_dir / "CONVERSATION.md").write_text(conv)
+        ready_items = self.wl.get_ready_items()
+        self.assertIn("ITEM-002", ready_items)
+        self.assertEqual(self.wl.get_col("ITEM-002", COL_STATUS), "resolved")
+
+    def test_inject_or_update_action_callout(self):
+        item_dir = self.work_dir / "ITEM-001"
+        item_dir.mkdir(parents=True, exist_ok=True)
+        conv_file = item_dir / "CONVERSATION.md"
+        conv_file.write_text("## 2026-08-17 | User\n\nInitial task\n")
+        self.wl._inject_or_update_action_callout("ITEM-001", "needs-review", 10.0, log_link="[Log](_logs/test.log)")
+        text = conv_file.read_text()
+        self.assertIn("> [!action] **Work-Loop Action Center**", text)
+        self.assertIn("Status: `needs-review`", text)
+        self.assertIn("[Log](_logs/test.log)", text)
+        self.assertIn("> - [ ] **Continue Analyze**", text)
+        self.assertIn("> - [ ] **Run Implement**", text)
+        self.assertIn("> - [ ] **Mark Resolved (Move to Done)**", text)
+        self.assertIn("> - [ ] **Abort**", text)
+
+        self.wl._inject_or_update_action_callout("ITEM-001", "done", 10.0)
+        text2 = conv_file.read_text()
+        self.assertIn("Status: `done`", text2)
+        self.assertEqual(text2.count("[!action]"), 1)
+
+    def test_in_progress_callout_shows_abort_only_and_log_link(self):
+        item_dir = self.work_dir / "ITEM-001"
+        item_dir.mkdir(parents=True, exist_ok=True)
+        conv_file = item_dir / "CONVERSATION.md"
+        conv_file.write_text("## 2026-08-17 | User\n\nInitial task\n")
+        self.wl._inject_or_update_action_callout(
+            "ITEM-001", "in-progress", 10.0, log_link="[Log](_logs/2026-08-18_ITEM-001.log)"
+        )
+        text = conv_file.read_text()
+        self.assertIn("> [!action] **Work-Loop Action Center**", text)
+        self.assertIn("Status: `in-progress`", text)
+        self.assertIn("[Log](_logs/2026-08-18_ITEM-001.log)", text)
+        self.assertIn("> - [ ] **Abort**", text)
+        self.assertNotIn("Continue Analyze", text)
+        self.assertNotIn("Run Implement", text)
+        self.assertNotIn("Mark Resolved", text)
+
+    def test_in_note_abort_triggers_abort(self):
+        item_dir = self.work_dir / "ITEM-002"
+        item_dir.mkdir(parents=True, exist_ok=True)
+        conv = (
+            "> [!action] **Work-Loop Action Center**\n"
+            "> Status: `in-progress` | Last Run: 2026-08-18 22:21 | [Log](_logs/2026-08-18_ITEM-002.log)\n"
+            "> - [x] **Abort**\n\n"
+            "## 2026-08-17 | AI Agent\nSome findings\n"
+        )
+        (item_dir / "CONVERSATION.md").write_text(conv)
+        self.wl.update_col("ITEM-002", COL_STATUS, "in-progress")
+        promoted = self.wl._scan_in_note_actions()
+        self.assertIn("ITEM-002", promoted)
+        self.assertEqual(self.wl.get_col("ITEM-002", COL_STATUS), "abort")
+        conv_after = (item_dir / "CONVERSATION.md").read_text()
+        self.assertIn("> - [ ] **Abort**", conv_after)
+        self.assertIn("Status: `abort`", conv_after)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 

@@ -402,7 +402,15 @@ class WorkLoop:
         self.harness_type = config['harness']['type']
         self.max_budget = config.get('harness', {}).get('max_budget_usd', 10.00)
         self.remote_work_dir = config.get('remote', {}).get('work_dir', '~/Work-Loop')
-        self.work_file = self.work_dir / "WORK.md"
+        self.work_file_name = config.get('work_file')
+        if not self.work_file_name:
+            if (self.work_dir / "WORK.md").exists():
+                self.work_file_name = "WORK.md"
+            elif (self.work_dir / "WORK-NEW.md").exists():
+                self.work_file_name = "WORK-NEW.md"
+            else:
+                self.work_file_name = "WORK.md"
+        self.work_file = self.work_dir / self.work_file_name
         self._stop = False
 
         # Build harness
@@ -442,8 +450,20 @@ class WorkLoop:
         return ""
 
     # -------------------------------------------------------------------------
-    # WORK.md I/O
+    # WORK.md & WORK-NEW.md I/O (Table & Outline formats + In-Note Actions)
     # -------------------------------------------------------------------------
+
+    def _is_outline_format(self) -> bool:
+        """Return True if self.work_file uses the outline format rather than table format."""
+        if self.work_file_name.endswith("-NEW.md") or self.work_file_name.endswith(".outline.md"):
+            return True
+        if not self.work_file.exists():
+            return False
+        try:
+            text = self.work_file.read_text(errors='replace')
+        except OSError:
+            return False
+        return "## Active Items" in text or "## Add New Item" in text
 
     def _read_lines(self) -> list[str]:
         with open(self.work_file, 'r') as f:
@@ -455,7 +475,798 @@ class WorkLoop:
             f.writelines(lines)
         Path(tmp).replace(self.work_file)
 
+    def _scan_in_note_actions(self) -> list[str]:
+        """Scan all item CONVERSATION.md files for checked action boxes.
+
+        Triggers:
+        - [x] Continue Analyze / Analyze / Ready -> ready
+        - [x] Run Implement / Implement -> implement
+        - [x] Mark Resolved / Resolved -> resolved
+        - [x] Abort -> abort
+
+        When detected, unchecks the box, updates status in the note's action callout
+        and in WORK.md / WORK-NEW.md, and returns list of promoted item_ids.
+        """
+        promoted = []
+        if not self.work_dir.exists():
+            return promoted
+        for item_dir in sorted(self.work_dir.iterdir()):
+            if not item_dir.is_dir() or item_dir.name.startswith('.'):
+                continue
+            conv_file = item_dir / "CONVERSATION.md"
+            if not conv_file.exists():
+                continue
+            try:
+                text = conv_file.read_text(errors='replace')
+            except OSError:
+                continue
+
+            pattern = re.compile(
+                r'^[ \t]*>?[ \t]*-\s*\[([xX])\]\s*(?:\*\*)?(?:(Continue\s+Analyze|Analyze|Ready)|(Run\s+Implement|Implement)|(Mark\s+Resolved(?:\s*\(Move to Done\))?|Resolved)|(Abort))(?:\*\*)?',
+                re.MULTILINE | re.IGNORECASE
+            )
+            match = pattern.search(text)
+            if not match:
+                continue
+
+            if match.group(2):
+                new_status = "ready"
+            elif match.group(3):
+                new_status = "implement"
+            elif match.group(4):
+                new_status = "resolved"
+            elif match.group(5):
+                new_status = "abort"
+            else:
+                continue
+
+            item_id = item_dir.name
+
+            def _uncheck(m):
+                return m.group(0).replace(f"[{m.group(1)}]", "[ ]")
+
+            new_text = pattern.sub(_uncheck, text)
+            new_text = re.sub(
+                r'(>\s*Status:\s*`)[^`]+(`)',
+                rf'\g<1>{new_status}\g<2>',
+                new_text,
+                flags=re.IGNORECASE
+            )
+            conv_file.write_text(new_text)
+            self.update_col(item_id, COL_STATUS, new_status)
+            print(f"[{_ts()}] {item_id}: in-note action triggered -> {new_status}")
+            promoted.append(item_id)
+        return promoted
+
+    def _inject_or_update_action_callout(
+        self,
+        item_id: str,
+        status: str,
+        budget: float | str | None = None,
+        last_run_ts: str | None = None,
+        log_link: str | None = None,
+    ) -> None:
+        """Ensure CONVERSATION.md begins with an updated, text-only Action Center callout.
+
+        While status is 'in-progress':
+        - Shows Status: `in-progress`
+        - Shows Log link to current running log
+        - Only shows the Abort action: - [ ] **Abort**
+
+        When status is not in-progress:
+        - Shows full actions: Continue Analyze, Run Implement, Mark Resolved, Abort
+        """
+        conv_file = self.work_dir / item_id / "CONVERSATION.md"
+        if not conv_file.exists():
+            return
+        try:
+            text = conv_file.read_text(errors='replace')
+        except OSError:
+            return
+
+        ts_str = last_run_ts or datetime.now().strftime('%Y-%m-%d %H:%M')
+
+        # Resolve log link if not provided
+        if not log_link:
+            log_col = self.get_col(item_id, COL_LOG) if hasattr(self, 'get_col') else ""
+            if log_col:
+                m_log = re.search(r'\[Log\]\((?:[^/)]+/)?(_logs/[^)]+|\.logs/[^)]+)\)', log_col)
+                if m_log:
+                    log_link = f"[Log]({m_log.group(1)})"
+                elif log_col.startswith("[Log]"):
+                    log_link = log_col
+            if not log_link:
+                logs_dir = self.work_dir / item_id / "_logs"
+                if logs_dir.exists():
+                    log_files = sorted(logs_dir.glob("*.log"), reverse=True)
+                    if log_files:
+                        log_link = f"[Log](_logs/{log_files[0].name})"
+                if not log_link:
+                    dots_dir = self.work_dir / item_id / ".logs"
+                    if dots_dir.exists():
+                        log_files = sorted(dots_dir.glob("*.log"), reverse=True)
+                        if log_files:
+                            log_link = f"[Log](.logs/{log_files[0].name})"
+
+        log_str = f" | {log_link}" if log_link else ""
+
+        if status == "in-progress":
+            callout_block = (
+                "> [!action] **Work-Loop Action Center**\n"
+                f"> Status: `in-progress` | Last Run: {ts_str}{log_str}\n"
+                "> - [ ] **Abort**"
+            )
+        else:
+            callout_block = (
+                "> [!action] **Work-Loop Action Center**\n"
+                f"> Status: `{status}` | Last Run: {ts_str}{log_str}\n"
+                "> - [ ] **Continue Analyze**\n"
+                "> - [ ] **Run Implement**\n"
+                "> - [ ] **Mark Resolved (Move to Done)**\n"
+                "> - [ ] **Abort**"
+            )
+
+        callout_re = re.compile(
+            r'>\s*\[!action\]\s*\*\*Work-Loop Action Center\*\*.*?(?=\n\n|\n[^\>]|\Z)',
+            re.DOTALL | re.IGNORECASE
+        )
+        if callout_re.search(text):
+            new_text = callout_re.sub(callout_block, text)
+        else:
+            new_text = callout_block + "\n\n" + text.lstrip()
+
+        if new_text != text:
+            conv_file.write_text(new_text)
+
+    # --- Outline format methods ---
+
+    def _parse_outline_blocks(self) -> dict[str, dict]:
+        """Parse all items in WORK-NEW.md into structured dict keyed by item_id."""
+        if not self.work_file.exists():
+            return {}
+        lines = self._read_lines()
+        items = {}
+        current_section = None
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+            if stripped.startswith("## Active Items"):
+                current_section = "active"
+                i += 1
+                continue
+            elif stripped.startswith("## Add New Item"):
+                current_section = "new"
+                i += 1
+                continue
+            elif stripped.startswith("## Done"):
+                current_section = "done"
+            elif stripped.startswith("## ") or stripped.startswith("# "):
+                current_section = None
+                i += 1
+                continue
+
+            if current_section == "active":
+                # Case 1: Table row in Active Items
+                is_separator = bool(re.match(r'^[|\s:\-]+$', stripped))
+                is_header = any(h in stripped.lower() for h in ("| task", "| status", "| conversation", "| last updated"))
+                if stripped.startswith("|") and not is_separator and not is_header:
+                    cells = [c.strip() for c in stripped.split("|")[1:-1]]
+                    if len(cells) >= 3:
+                        start_idx = i
+                        item_lines = [line]
+                        end_idx = i + 1
+
+                        if cells[0] in ("[ ]", "[x]", "[X]", ""):
+                            task_cell = cells[1] if len(cells) > 1 else ""
+                            status_cell = cells[2] if len(cells) > 2 else "ready"
+                            if len(cells) >= 6:
+                                last_updated = cells[3]
+                                log_cell = cells[4]
+                                id_cell = cells[5]
+                            elif len(cells) == 5:
+                                last_updated = cells[3] if re.match(r'^\d{4}-\d{2}-\d{2}$', cells[3]) else ""
+                                log_cell = cells[3] if not last_updated else cells[4]
+                                id_cell = cells[4] if not last_updated else ""
+                            else:
+                                last_updated = ""
+                                log_cell = cells[3] if len(cells) > 3 else ""
+                                id_cell = cells[4] if len(cells) > 4 else ""
+                        else:
+                            task_cell = cells[0]
+                            status_cell = cells[1] if len(cells) > 1 else "ready"
+                            if len(cells) >= 5:
+                                last_updated = cells[2]
+                                log_cell = cells[3]
+                                id_cell = cells[4]
+                            elif len(cells) == 4:
+                                last_updated = cells[2] if re.match(r'^\d{4}-\d{2}-\d{2}$', cells[2]) else ""
+                                log_cell = cells[2] if not last_updated else cells[3]
+                                id_cell = cells[3] if not last_updated else ""
+                            else:
+                                last_updated = ""
+                                log_cell = ""
+                                id_cell = cells[2] if len(cells) > 2 else ""
+
+                        m_id = re.search(r'(?:`|\*\*|\b)([A-Za-z0-9_.-]+)(?:`|\*\*|\b)', id_cell)
+                        item_id = m_id.group(1).strip() if m_id and m_id.group(1).strip() else id_cell.strip('`* ')
+                        if not item_id or item_id in ("-", ""):
+                            m_link = re.search(r'\[[^\]]+\]\((?:.+/)?([^/)]+)/CONVERSATION\.md\)', task_cell)
+                            item_id = m_link.group(1).strip() if m_link else "ITEM-UNKNOWN"
+
+                        m_stat = re.search(r'`?([a-z-]+)`?', status_cell, re.IGNORECASE)
+                        status = m_stat.group(1).strip() if m_stat else "ready"
+
+                        m_thread = re.search(r'(\[[^\]]+\]\([^)]*CONVERSATION\.md\))', task_cell)
+                        thread = m_thread.group(1).strip() if m_thread else task_cell
+
+                        items[item_id] = {
+                            "id": item_id,
+                            "section": "active",
+                            "status": status,
+                            "budget": f"${self.max_budget}",
+                            "location": "local",
+                            "last_updated": last_updated,
+                            "thread": thread,
+                            "log": log_cell,
+                            "start": start_idx,
+                            "end": end_idx,
+                            "lines": item_lines,
+                            "format": "table",
+                        }
+                        i += 1
+                        continue
+
+                # Case 2: Bullet item in Active Items
+                elif (
+                    stripped.startswith("- [ ]")
+                    or stripped.startswith("- [x]")
+                    or stripped.startswith("- **")
+                    or (stripped.startswith("- [") and not stripped.startswith("- [ ]"))
+                ):
+                    start_idx = i
+                    item_lines = [line]
+                    i += 1
+                    while i < len(lines):
+                        next_line = lines[i]
+                        if next_line.startswith("  ") or next_line.startswith("\t"):
+                            item_lines.append(next_line)
+                            i += 1
+                        else:
+                            break
+                    end_idx = i
+                    block = "".join(item_lines)
+                    m_end_id = re.search(r'(?:`|\*\*)\s*([A-Za-z0-9_.-]+)\s*(?:`|\*\*)\s*$', item_lines[0].strip())
+                    if m_end_id:
+                        item_id = m_end_id.group(1).strip()
+                    else:
+                        m_link = re.search(r'\[[^\]]+\]\((?:.+/)?([^/)]+)/CONVERSATION\.md\)', block)
+                        if m_link:
+                            item_id = m_link.group(1).strip()
+                        else:
+                            m_id = re.search(r'(?:\*\*|`)([^*`]+)(?:\*\*|`)', block)
+                            item_id = m_id.group(1).strip() if m_id else stripped.split()[2].strip('*`')
+
+                    m_status = re.search(r"status:\s*`?([^\s·|`]+)`?", block, re.IGNORECASE)
+                    status = m_status.group(1).strip() if m_status else "ready"
+                    m_budget = re.search(r"budget:\s*`?(\$?[0-9.]+(?:\s*-\s*[A-Za-z]+)?)`?", block, re.IGNORECASE)
+                    budget = m_budget.group(1).strip() if m_budget else f"${self.max_budget}"
+                    m_loc = re.search(r"location:\s*`?([^\s·|`]+)`?", block, re.IGNORECASE)
+                    location = m_loc.group(1).strip() if m_loc else "local"
+                    m_date = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", block)
+                    last_updated = m_date.group(1) if m_date else ""
+                    m_thread = re.search(r'(?:—\s*|\bThread:\s*)(\[[^\]]+\]\([^)]+\))', block)
+                    if not m_thread:
+                        m_thread = re.search(r'(\[[^\]]+\]\([^)]*CONVERSATION\.md\))', block)
+                    thread = m_thread.group(1).strip() if m_thread else ""
+
+                    m_log = re.search(r'(?:Log:\s*|·\s*)(\[[^\]]+\]\([^)]*\.(?:log|debug)\))', block)
+                    if not m_log:
+                        m_log = re.search(r'Log:\s*(\[[^\]]+\]\([^)]+\)|\S+)', block)
+                    log_link = m_log.group(1).strip() if m_log else ""
+
+                    items[item_id] = {
+                        "id": item_id,
+                        "section": "active",
+                        "status": status,
+                        "budget": budget,
+                        "location": location,
+                        "last_updated": last_updated,
+                        "thread": thread,
+                        "log": log_link,
+                        "start": start_idx,
+                        "end": end_idx,
+                        "lines": item_lines,
+                        "format": "bullet",
+                    }
+                    continue
+            i += 1
+        return items
+
+    def _scan_outline_actions(self) -> list[str]:
+        """Scan WORK-NEW.md for checked action checkboxes [x] under ## Active Items."""
+        if not self.work_file.exists():
+            return []
+        lines = self._read_lines()
+        items = self._parse_outline_blocks()
+        promoted = []
+        action_pattern = re.compile(
+            r'\[([xX])\]\s*(ready|analyze|implement|resolved|abort)',
+            re.IGNORECASE
+        )
+        changed = False
+
+        for item_id, item in items.items():
+            main_line = item["lines"][0]
+            if item.get("format") == "table":
+                m_tbl_check = re.search(r'\|\s*\[([xX])\]\s*\|', main_line)
+                if m_tbl_check:
+                    item["lines"][0] = re.sub(r'\|\s*\[([xX])\]\s*\|', '| [ ] |', main_line, count=1)
+                    cur_status = item["status"]
+                    new_status = cur_status if cur_status in self.TRIGGER_STATUSES else "ready"
+                    cells = [c.strip() for c in item["lines"][0].split("|")[1:-1]]
+                    if len(cells) >= 3 and cells[0] in ("[ ]", "[x]", "[X]", ""):
+                        cells[2] = f"{new_status}"
+                        item["lines"][0] = "| " + " | ".join(cells) + " |\n"
+                    changed = True
+                    promoted.append(item_id)
+                    print(f"[{_ts()}] {item_id}: table checkbox triggered -> {new_status}")
+                    continue
+            else:
+                m_main = re.search(r'^[ \t]*-\s*\[([xX])\]', main_line)
+                if m_main:
+                    item["lines"][0] = re.sub(r'^[ \t]*-\s*\[([xX])\]', '- [ ]', main_line)
+                    cur_status = item["status"]
+                    new_status = cur_status if cur_status in self.TRIGGER_STATUSES else "ready"
+                    if new_status != cur_status:
+                        item["lines"][0] = re.sub(
+                            r'status:\s*`?[^\s·|`]+`?',
+                            f'status: {new_status}',
+                            item["lines"][0],
+                            flags=re.IGNORECASE
+                        )
+                    changed = True
+                    promoted.append(item_id)
+                    print(f"[{_ts()}] {item_id}: main outline checkbox triggered -> {new_status}")
+                    continue
+
+                for idx, line in enumerate(item["lines"]):
+                    m = action_pattern.search(line)
+                    if m:
+                        new_status = m.group(2).lower()
+                        item["lines"][idx] = action_pattern.sub(lambda match: f"[ ] {match.group(2)}", line)
+                        item["lines"][0] = re.sub(
+                            r'status:\s*`?[^\s·|`]+`?',
+                            f'status: {new_status}',
+                            item["lines"][0],
+                            flags=re.IGNORECASE
+                        )
+                        changed = True
+                        promoted.append(item_id)
+                        print(f"[{_ts()}] {item_id}: outline action triggered -> {new_status}")
+                        break
+
+        if changed:
+            rebuilt = []
+            cur_idx = 0
+            for item_id, item in items.items():
+                rebuilt.extend(lines[cur_idx:item["start"]])
+                rebuilt.extend(item["lines"])
+                cur_idx = item["end"]
+            rebuilt.extend(lines[cur_idx:])
+            self._write_lines(rebuilt)
+
+        return promoted
+
+    def _get_ready_items_outline(self) -> list[str]:
+        items = self._parse_outline_blocks()
+        ready = []
+        for item_id, item in items.items():
+            if item["status"] in self.TRIGGER_STATUSES:
+                ready.append(item_id)
+        return ready
+
+    def _get_new_items_outline(self) -> list[str]:
+        if not self.work_file.exists():
+            return []
+        lines = self._read_lines()
+        new_items = []
+        in_new_section = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("## Add New Item"):
+                in_new_section = True
+                continue
+            elif stripped.startswith("## "):
+                in_new_section = False
+                continue
+            if in_new_section and (stripped.startswith("- [ ]") or stripped.startswith("- ") or stripped.startswith("|")):
+                if stripped.startswith("<!--") or stripped.startswith("|---") or stripped.startswith("| Task"):
+                    continue
+                m = re.match(r'^[ \t]*-\s*(?:\[\s*\]\s*)?(?:\*\*(?P<id>[^*]+)\*\*)?\s*(?P<prompt>.+)', stripped)
+                if m and m.group('prompt'):
+                    prompt = m.group('prompt').strip()
+                    if prompt.startswith("<!--"):
+                        continue
+                    item_id = m.group('id').strip() if m.group('id') else self._slugify_title(prompt)
+                    new_items.append(item_id)
+        return new_items
+
+    @staticmethod
+    def _slugify_title(title: str) -> str:
+        clean = re.sub(r'[^\w\s-]', '', title).strip()
+        words = clean.split()
+        if len(words) > 4:
+            words = words[:4]
+        slug = "-".join(words)
+        return slug or f"ITEM-{datetime.now().strftime('%m%d%H%M')}"
+
+    def _extract_prompt_from_new_outline(self, item_id: str) -> str:
+        if not self.work_file.exists():
+            return item_id
+        lines = self._read_lines()
+        in_new_section = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("## Add New Item"):
+                in_new_section = True
+                continue
+            elif stripped.startswith("## "):
+                in_new_section = False
+                continue
+            if in_new_section and (stripped.startswith("- [ ]") or stripped.startswith("- ") or stripped.startswith("|")):
+                if stripped.startswith("<!--") or stripped.startswith("|---"):
+                    continue
+                m = re.match(r'^[ \t]*-\s*(?:\[\s*\]\s*)?(?:\*\*(?P<id>[^*]+)\*\*)?\s*(?P<prompt>.+)', stripped)
+                if m and m.group('prompt'):
+                    prompt = m.group('prompt').strip()
+                    matched_id = m.group('id').strip() if m.group('id') else self._slugify_title(prompt)
+                    if matched_id == item_id or item_id in prompt:
+                        return prompt
+        return item_id
+
+    def _promote_new_item_outline(self, item_id: str, prompt: str) -> None:
+        if not self.work_file.exists():
+            return
+        lines = self._read_lines()
+        new_lines = []
+        in_new_section = False
+        removed = False
+
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("## Add New Item"):
+                in_new_section = True
+                new_lines.append(line)
+                continue
+            elif stripped.startswith("## "):
+                in_new_section = False
+
+            if in_new_section and not removed and (stripped.startswith("- [ ]") or stripped.startswith("- ") or stripped.startswith("|")):
+                if item_id in stripped or prompt in stripped:
+                    removed = True
+                    continue
+            new_lines.append(line)
+
+        active_idx = -1
+        active_has_table = False
+        for i, l in enumerate(new_lines):
+            if l.strip().startswith("## Active Items"):
+                active_idx = i + 1
+                for j in range(i + 1, min(i + 5, len(new_lines))):
+                    if new_lines[j].strip().startswith("|"):
+                        active_has_table = True
+                        break
+                break
+        if active_idx < 0:
+            active_idx = len(new_lines)
+
+        today = datetime.now().strftime('%Y-%m-%d')
+        if active_has_table:
+            row = f"| [{prompt}]({item_id}/CONVERSATION.md) | ready | {today} | | {item_id} |\n"
+            insert_pos = active_idx
+            while insert_pos < len(new_lines) and (new_lines[insert_pos].strip().startswith("|---") or new_lines[insert_pos].strip().startswith("|:---") or new_lines[insert_pos].strip().startswith("| |") or new_lines[insert_pos].strip().startswith("| Task") or not new_lines[insert_pos].strip()):
+                insert_pos += 1
+            new_lines.insert(insert_pos, row)
+        else:
+            block = f"\n- [ ] [{prompt}]({item_id}/CONVERSATION.md) · status: ready · {item_id}\n"
+            new_lines.insert(active_idx, block)
+
+        self._write_lines(new_lines)
+
+    def _get_col_outline(self, item_id: str, col_idx: int) -> str:
+        items = self._parse_outline_blocks()
+        if item_id in items:
+            item = items[item_id]
+            if col_idx == COL_ID:
+                return item["id"]
+            elif col_idx == COL_TITLE:
+                return item["thread"] or f"[{item_id}]({item_id}/CONVERSATION.md)"
+            elif col_idx == COL_LOCATION:
+                return item["location"]
+            elif col_idx == COL_STATUS:
+                return item["status"]
+            elif col_idx == COL_LAST_UPDATED:
+                return item["last_updated"]
+            elif col_idx == COL_BUDGET:
+                return item["budget"]
+            elif col_idx == COL_LOG:
+                return item["log"]
+        if self.work_file.exists():
+            for line in self._read_lines():
+                if item_id in line:
+                    if col_idx == COL_ID:
+                        return item_id
+                    elif col_idx == COL_STATUS:
+                        return "done"
+        return ""
+
+    def _update_col_outline(self, item_id: str, col_idx: int, value: str) -> None:
+        if col_idx == COL_STATUS and value == "done":
+            self._move_row_to_done_outline(item_id)
+            return
+
+        lines = self._read_lines()
+        items = self._parse_outline_blocks()
+        if item_id not in items:
+            return
+
+        item = items[item_id]
+        item_lines = item["lines"]
+
+        if item.get("format") == "table":
+            cells = [c.strip() for c in item_lines[0].split("|")[1:-1]]
+            has_trigger = len(cells) >= 3 and cells[0] in ("[ ]", "[x]", "[X]", "")
+            if has_trigger:
+                task_idx = 1
+                stat_idx = 2
+                date_idx = 3 if len(cells) >= 5 else -1
+                log_idx = 4 if len(cells) >= 5 else 3
+                id_idx = 5 if len(cells) >= 6 else (4 if len(cells) >= 5 else -1)
+            else:
+                task_idx = 0
+                stat_idx = 1
+                date_idx = 2 if len(cells) >= 5 else -1
+                log_idx = 3 if len(cells) >= 5 else 2
+                id_idx = 4 if len(cells) >= 5 else 3
+
+            if col_idx == COL_STATUS and stat_idx < len(cells):
+                cells[stat_idx] = value
+            elif col_idx == COL_LAST_UPDATED:
+                if date_idx >= 0 and date_idx < len(cells):
+                    cells[date_idx] = value
+            elif col_idx == COL_LOG:
+                if log_idx >= 0:
+                    while len(cells) <= log_idx:
+                        cells.append("")
+                    cells[log_idx] = value
+            elif col_idx == COL_TITLE and task_idx < len(cells):
+                if "<br>" in cells[task_idx]:
+                    parts = cells[task_idx].split("<br>", 1)
+                    cells[task_idx] = value + "<br>" + parts[1]
+                else:
+                    cells[task_idx] = value
+            elif col_idx == COL_ID and id_idx >= 0 and id_idx < len(cells):
+                cells[id_idx] = value
+
+            item_lines[0] = "| " + " | ".join(cells) + " |\n"
+        else:
+            if col_idx == COL_STATUS:
+                item_lines[0] = re.sub(
+                    r'status:\s*`?[^\s·|`]+`?',
+                    f'status: {value}',
+                    item_lines[0],
+                    flags=re.IGNORECASE
+                )
+            elif col_idx == COL_BUDGET:
+                if "budget:" in item_lines[0]:
+                    item_lines[0] = re.sub(
+                        r'budget:\s*`?[^\s·|`]+`?',
+                        f'budget: {value}',
+                        item_lines[0],
+                        flags=re.IGNORECASE
+                    )
+            elif col_idx == COL_LOCATION:
+                if "location:" in item_lines[0]:
+                    item_lines[0] = re.sub(
+                        r'location:\s*`?[^\s·|`]+`?',
+                        f'location: {value}',
+                        item_lines[0],
+                        flags=re.IGNORECASE
+                    )
+            elif col_idx == COL_LAST_UPDATED:
+                if re.search(r'\b(20\d{2}-\d{2}-\d{2})\b', item_lines[0]):
+                    item_lines[0] = re.sub(r'\b(20\d{2}-\d{2}-\d{2})\b', value, item_lines[0])
+            elif col_idx == COL_LOG:
+                updated = False
+                for idx, l in enumerate(item_lines):
+                    if re.search(r'(\[Log\]\([^)]+\)|Log:\s*\[[^\]]+\]\([^)]+\)|·\s*\[[^\]]+\]\([^)]*\.(?:log|debug)\))', l):
+                        item_lines[idx] = re.sub(r'(\[Log\]\([^)]+\)|Log:\s*\[[^\]]+\]\([^)]+\)|\[[^\]]+\]\([^)]*\.(?:log|debug)\))', value, l)
+                        updated = True
+                        break
+                if not updated:
+                    if f"`{item_id}`" in item_lines[0]:
+                        item_lines[0] = re.sub(rf'\s*·\s*`{re.escape(item_id)}`', f' · {value} · `{item_id}`', item_lines[0])
+                    else:
+                        item_lines[0] = item_lines[0].rstrip('\n') + f" · {value}\n"
+            elif col_idx == COL_TITLE:
+                updated = False
+                for idx, l in enumerate(item_lines):
+                    if re.search(r'(\[[^\]]+\]\([^)]*CONVERSATION\.md\))', l):
+                        item_lines[idx] = re.sub(r'(\[[^\]]+\]\([^)]*CONVERSATION\.md\))', value, l)
+                        updated = True
+                        break
+                    elif "Thread:" in l:
+                        item_lines[idx] = f"  - Thread: {value}\n"
+                        updated = True
+                        break
+
+        new_lines = lines[:item["start"]] + item_lines + lines[item["end"]:]
+        self._write_lines(new_lines)
+
+    def _move_done_items_outline(self) -> None:
+        items = self._parse_outline_blocks()
+        for item_id, item in items.items():
+            if item["status"] == "done":
+                self._move_row_to_done_outline(item_id)
+
+    def _move_row_to_done_outline(self, item_id: str) -> None:
+        if not self.work_file.exists():
+            return
+        lines = self._read_lines()
+        items = self._parse_outline_blocks()
+        if item_id not in items:
+            return
+        item = items[item_id]
+
+        new_lines = lines[:item["start"]] + lines[item["end"]:]
+        title = item["thread"] or f"[{item_id}]({item_id}/CONVERSATION.md)"
+        log_str = item['log'] if item['log'] else ""
+        last_updated = item.get('last_updated', '') or datetime.now().strftime('%Y-%m-%d')
+
+        done_idx = -1
+        done_has_table = False
+        for i, l in enumerate(new_lines):
+            if l.strip().startswith("## Done"):
+                done_idx = i + 1
+                for j in range(i + 1, min(i + 5, len(new_lines))):
+                    if new_lines[j].strip().startswith("|"):
+                        done_has_table = True
+                        break
+                break
+
+        if item.get("format") == "table" or done_has_table:
+            done_line = f"| {title} | {last_updated} | {log_str} | {item_id} |\n"
+        else:
+            log_suffix = f" · {log_str}" if log_str else ""
+            done_line = f"- [x] {title}{log_suffix} · {item_id}\n"
+
+        if done_idx >= 0:
+            if done_has_table:
+                insert_pos = done_idx
+                while insert_pos < len(new_lines) and (new_lines[insert_pos].strip().startswith("|---") or new_lines[insert_pos].strip().startswith("|:---") or new_lines[insert_pos].strip().startswith("| Task") or not new_lines[insert_pos].strip()):
+                    insert_pos += 1
+                new_lines.insert(insert_pos, done_line)
+            else:
+                new_lines.insert(done_idx, done_line)
+        else:
+            if item.get("format") == "table":
+                new_lines.append("\n## Done\n\n| Task / Conversation | Last Updated | Log | ID |\n|---|:---:|:---:|---|\n" + done_line)
+            else:
+                new_lines.append("\n## Done\n\n" + done_line)
+
+        self._write_lines(new_lines)
+
+    def _insert_work_row_outline(self, item_id: str, title: str, location: str) -> None:
+        if not self.work_file.exists():
+            return
+        lines = self._read_lines()
+        active_idx = -1
+        active_has_table = False
+        for i, l in enumerate(lines):
+            if l.strip().startswith("## Active Items"):
+                active_idx = i + 1
+                for j in range(i + 1, min(i + 5, len(lines))):
+                    if lines[j].strip().startswith("|"):
+                        active_has_table = True
+                        break
+                break
+        if active_idx < 0:
+            active_idx = len(lines)
+
+        today = datetime.now().strftime('%Y-%m-%d')
+        if active_has_table:
+            row = f"| [{title}]({item_id}/CONVERSATION.md) | ready | {today} | | {item_id} |\n"
+            insert_pos = active_idx
+            while insert_pos < len(lines) and (lines[insert_pos].strip().startswith("|---") or lines[insert_pos].strip().startswith("|:---") or lines[insert_pos].strip().startswith("| Task") or not lines[insert_pos].strip()):
+                insert_pos += 1
+            lines.insert(insert_pos, row)
+        else:
+            block = f"\n- [ ] [{title}]({item_id}/CONVERSATION.md) · status: ready · {item_id}\n"
+            lines.insert(active_idx, block)
+        self._write_lines(lines)
+
+    def _remove_work_row_outline(self, item_id: str) -> None:
+        if not self.work_file.exists():
+            return
+        lines = self._read_lines()
+        items = self._parse_outline_blocks()
+        if item_id in items:
+            item = items[item_id]
+            new_lines = lines[:item["start"]] + lines[item["end"]:]
+            self._write_lines(new_lines)
+
+    def _refresh_outline_dashboard(self) -> None:
+        """Refresh child agent report lines in WORK-NEW.md."""
+        lines = self._read_lines()
+        items = self._parse_outline_blocks()
+        changed = False
+
+        for parent_id, item in items.items():
+            children = self.get_children(parent_id)
+            if not children:
+                continue
+            for child_name, child_status, config in children:
+                resolved = self._resolve_child_note(parent_id, config)
+                relpath = self._child_note_relpath(parent_id, resolved) if resolved else ""
+                sched = config.get('schedule', '')
+                reason = self._read_child_attention(resolved)
+                reason_str = f" — {reason}" if reason else ""
+                sched_str = f" ({sched})" if sched else ""
+                title = config.get('title', child_name)
+
+                if item.get("format") == "table":
+                    child_badge = f"<br>↳ {child_name}{sched_str}{reason_str} → [{title}]({relpath})"
+                    cells = [c.strip() for c in item["lines"][0].split("|")[1:-1]]
+                    task_idx = 1 if len(cells) >= 3 and cells[0] in ("[ ]", "[x]", "[X]", "") else 0
+                    if task_idx < len(cells):
+                        task_val = cells[task_idx]
+                        if f"{child_name}" in task_val:
+                            task_val = re.sub(rf"<br>↳\s*`?{re.escape(child_name)}`?[^<]*", child_badge, task_val)
+                        else:
+                            task_val += child_badge
+                        cells[task_idx] = task_val
+                        new_row = "| " + " | ".join(cells) + " |\n"
+                        if new_row != item["lines"][0]:
+                            item["lines"][0] = new_row
+                            changed = True
+                else:
+                    child_line = f"  - Child: **{child_name}** `status: {child_status}`{sched_str}{reason_str} → [{title}]({relpath})\n"
+                    found = False
+                    for idx, l in enumerate(item["lines"]):
+                        if re.search(rf"Child:\s*\*\*{re.escape(child_name)}\*\*", l):
+                            if item["lines"][idx] != child_line:
+                                item["lines"][idx] = child_line
+                                changed = True
+                            found = True
+                            break
+                    if not found:
+                        item["lines"].append(child_line)
+                        changed = True
+
+        if changed:
+            rebuilt = []
+            cur_idx = 0
+            for item_id, item in items.items():
+                rebuilt.extend(lines[cur_idx:item["start"]])
+                rebuilt.extend(item["lines"])
+                cur_idx = item["end"]
+            rebuilt.extend(lines[cur_idx:])
+            lines = rebuilt
+
+        text = "".join(lines)
+        new_text = self._replace_needs_attention_block(text, "")
+        if new_text != text:
+            self._write_lines([l + "\n" for l in new_text.splitlines()])
+        elif changed:
+            self._write_lines(lines)
+
+    # --- Unified public API ---
+
     def update_col(self, item_id: str, col_idx: int, value: str) -> None:
+        if self._is_outline_format():
+            self._update_col_outline(item_id, col_idx, value)
+            return
         lines = self._read_lines()
         new_lines = []
         for line in lines:
@@ -469,6 +1280,8 @@ class WorkLoop:
         self._write_lines(new_lines)
 
     def get_col(self, item_id: str, col_idx: int) -> str:
+        if self._is_outline_format():
+            return self._get_col_outline(item_id, col_idx)
         for line in self._read_lines():
             stripped = line.rstrip('\n')
             if not stripped.startswith('|'):
@@ -482,6 +1295,10 @@ class WorkLoop:
     TRIGGER_STATUSES = {'ready', 'analyze', 'implement', 'resolved', 'research'}
 
     def get_ready_items(self) -> list[str]:
+        self._scan_in_note_actions()
+        if self._is_outline_format():
+            self._scan_outline_actions()
+            return self._get_ready_items_outline()
         items = []
         for line in self._read_lines():
             stripped = line.rstrip('\n')
@@ -495,6 +1312,8 @@ class WorkLoop:
         return items
 
     def get_new_items(self) -> list[str]:
+        if self._is_outline_format():
+            return self._get_new_items_outline()
         items = []
         for line in self._read_lines():
             stripped = line.rstrip('\n')
@@ -529,16 +1348,31 @@ class WorkLoop:
             print(f"[{_ts()}] Initialized script item: {item_id} (status: {initial_status})")
             return
 
-        raw_title = self.get_col(item_id, COL_TITLE)
-        m = re.match(r'\[([^\]]+)\]', raw_title)
-        prompt = self._normalize_table_text(m.group(1) if m else raw_title)
+        if self._is_outline_format():
+            prompt = self._extract_prompt_from_new_outline(item_id)
+        else:
+            raw_title = self.get_col(item_id, COL_TITLE)
+            m = re.match(r'\[([^\]]+)\]', raw_title)
+            prompt = self._normalize_table_text(m.group(1) if m else raw_title)
 
         conv_file = item_dir / "CONVERSATION.md"
+        today = datetime.now().strftime('%Y-%m-%d')
         if not conv_file.exists():
-            today = datetime.now().strftime('%Y-%m-%d')
-            conv_file.write_text(f"## {today} | User\n\n{prompt}\n")
+            action_callout = (
+                "> [!action] **Work-Loop Action Center**\n"
+                f"> Status: `ready` | Budget: `${self.max_budget}` | Last Run: {today}\n"
+                "> - [ ] **Continue Analyze**\n"
+                "> - [ ] **Run Implement**\n"
+                "> - [ ] **Mark Resolved (Move to Done)**\n"
+                "> - [ ] **Abort**\n\n"
+            )
+            conv_file.write_text(f"{action_callout}## {today} | User\n\n{prompt}\n")
 
-        self.update_col(item_id, COL_STATUS, "ready")
+        if self._is_outline_format():
+            self._promote_new_item_outline(item_id, prompt)
+        else:
+            self.update_col(item_id, COL_STATUS, "ready")
+
         print(f"[{_ts()}] Initialized new item: {item_id}")
 
     def _initialize_research_item(self, item_id: str, config: dict) -> None:
@@ -550,7 +1384,15 @@ class WorkLoop:
         if not conv_file.exists():
             title = config.get('title', item_id)
             today = datetime.now().strftime('%Y-%m-%d')
-            conv_file.write_text(f"## {today} | User\n\nResearch item: {title}\n")
+            action_callout = (
+                "> [!action] **Work-Loop Action Center**\n"
+                f"> Status: `ready` | Budget: `${self.max_budget}` | Last Run: {today}\n"
+                "> - [ ] **Continue Analyze**\n"
+                "> - [ ] **Run Implement**\n"
+                "> - [ ] **Mark Resolved (Move to Done)**\n"
+                "> - [ ] **Abort**\n\n"
+            )
+            conv_file.write_text(f"{action_callout}## {today} | User\n\nResearch item: {title}\n")
 
         initial_status = 'scheduled' if config.get('schedule') else 'ready'
         self.update_col(item_id, COL_STATUS, initial_status)
@@ -561,16 +1403,30 @@ class WorkLoop:
         conv_file = self.work_dir / item_id / "CONVERSATION.md"
         if conv_file.exists():
             return
-        raw_title = self.get_col(item_id, COL_TITLE)
-        m = re.match(r'\[([^\]]+)\]', raw_title)
-        prompt = self._normalize_table_text(m.group(1) if m else raw_title)
+        if self._is_outline_format():
+            prompt = self.get_item_title(item_id)
+        else:
+            raw_title = self.get_col(item_id, COL_TITLE)
+            m = re.match(r'\[([^\]]+)\]', raw_title)
+            prompt = self._normalize_table_text(m.group(1) if m else raw_title)
         item_dir = self.work_dir / item_id
         item_dir.mkdir(parents=True, exist_ok=True)
         today = datetime.now().strftime('%Y-%m-%d')
-        conv_file.write_text(f"## {today} | User\n\n{prompt}\n")
+        action_callout = (
+            "> [!action] **Work-Loop Action Center**\n"
+            f"> Status: `ready` | Budget: `${self.max_budget}` | Last Run: {today}\n"
+            "> - [ ] **Continue Analyze**\n"
+            "> - [ ] **Run Implement**\n"
+            "> - [ ] **Mark Resolved (Move to Done)**\n"
+            "> - [ ] **Abort**\n\n"
+        )
+        conv_file.write_text(f"{action_callout}## {today} | User\n\n{prompt}\n")
         print(f"[{_ts()}] Auto-initialized CONVERSATION.md for: {item_id}")
 
     def move_done_items(self) -> None:
+        if self._is_outline_format():
+            self._move_done_items_outline()
+            return
         lines = self._read_lines()
 
         done_section_start = next(
@@ -611,6 +1467,9 @@ class WorkLoop:
 
     def _move_row_to_done(self, item_id: str) -> None:
         """Move a specific row (by ID) from active section to Done section without changing its status value."""
+        if self._is_outline_format():
+            self._move_row_to_done_outline(item_id)
+            return
         lines = self._read_lines()
 
         done_section_start = next(
@@ -623,7 +1482,6 @@ class WorkLoop:
                     done_table_insert_idx = i + 1
                     break
 
-        # Find the row to move
         row_index = -1
         for i, line in enumerate(lines):
             if done_section_start >= 0 and i >= done_section_start:
@@ -641,23 +1499,19 @@ class WorkLoop:
         if row_index < 0 or done_table_insert_idx < 0:
             return
 
-        # Extract the row content
         row_content = lines[row_index]
-
-        # Remove the row from its current position
         new_lines = [l for i, l in enumerate(lines) if i != row_index]
-
-        # Adjust insert index if we removed a row before the insertion point
         adjust = 1 if row_index < done_table_insert_idx else 0
         insert_at = done_table_insert_idx - adjust
 
-        # Insert the row at the correct position in the Done section
         new_lines.insert(insert_at, row_content)
-
         self._write_lines(new_lines)
 
     def insert_work_row(self, item_id: str, title: str, location: str) -> None:
         """Insert a new row after the active table separator."""
+        if self._is_outline_format():
+            self._insert_work_row_outline(item_id, title, location)
+            return
         lines = self._read_lines()
         insert_idx = -1
         in_active = True
@@ -678,6 +1532,9 @@ class WorkLoop:
 
     def remove_work_row(self, item_id: str) -> None:
         """Remove a row by ID from any section."""
+        if self._is_outline_format():
+            self._remove_work_row_outline(item_id)
+            return
         lines = self._read_lines()
         new_lines = []
         for line in lines:
@@ -831,6 +1688,13 @@ class WorkLoop:
 
         mode = self.get_col(item_id, COL_STATUS)  # read trigger status BEFORE overwriting
         self.update_col(item_id, COL_STATUS, "in-progress")
+        self._inject_or_update_action_callout(
+            item_id,
+            "in-progress",
+            budget=budget,
+            last_run_ts=datetime.now().strftime('%Y-%m-%d %H:%M'),
+            log_link=f"[Log](_logs/{ts}_{item_id}.log)",
+        )
 
         if mode == "research":
             config = self._parse_runs_md(item_id)
@@ -897,8 +1761,10 @@ class WorkLoop:
         self.update_col(item_id, COL_LAST_UPDATED, today)
         self.update_col(item_id, COL_LOG, log_link)
 
+        note_log_link = f"[Log](_logs/{ts}_{item_id}.log)"
         if current_status == 'abort':
             self.prepend_abort_notice(item_id, today, budget, "aborted by user")
+            self._inject_or_update_action_callout(item_id, "abort", budget, log_link=note_log_link)
             print(f"[{_ts()}] {item_id}: aborted by user — status left as abort")
         elif exit_code != 0:
             failure = self._classify_failure(item_id, ts)
@@ -909,6 +1775,7 @@ class WorkLoop:
             self.update_col(item_id, COL_STATUS, "needs-review")
             self.update_col(item_id, COL_BUDGET, budget_label)
             self.prepend_abort_notice(item_id, today, budget, cause)
+            self._inject_or_update_action_callout(item_id, "needs-review", budget, log_link=note_log_link)
             print(msg)
         else:
             self.update_col(item_id, COL_BUDGET, f"${budget}")
@@ -931,13 +1798,18 @@ class WorkLoop:
                     self._append_research_run(item_id, latest_run, summary)
                 if config.get('schedule'):
                     self.update_col(item_id, COL_STATUS, "scheduled")
+                    self._inject_or_update_action_callout(item_id, "scheduled", budget, log_link=note_log_link)
                 else:
                     self.update_col(item_id, COL_STATUS, "done")
+                    self._inject_or_update_action_callout(item_id, "done", budget, log_link=note_log_link)
                 print(f"[{_ts()}] {item_id}: research complete — status={'scheduled' if config.get('schedule') else 'done'}")
             elif mode == "resolved":
                 self._move_row_to_done(item_id)
+                self._inject_or_update_action_callout(item_id, "done", budget, log_link=note_log_link)
                 print(f"[{_ts()}] {item_id}: resolved — moved to Done section")
             else:
+                final_status = self.get_col(item_id, COL_STATUS) or "needs-review"
+                self._inject_or_update_action_callout(item_id, final_status, budget, log_link=note_log_link)
                 print(f"[{_ts()}] {item_id}: completed")
 
     # -------------------------------------------------------------------------
@@ -954,6 +1826,14 @@ class WorkLoop:
 
     def dispatch_remote(self, item_id: str, ts_str: str, remote_host: str, budget: float, mode: str = "analyze") -> None:
         self._auto_init_conversation(item_id)
+        self.update_col(item_id, COL_STATUS, "in-progress")
+        self._inject_or_update_action_callout(
+            item_id,
+            "in-progress",
+            budget=budget,
+            last_run_ts=datetime.now().strftime('%Y-%m-%d %H:%M'),
+            log_link=f"[Log](_logs/{ts_str}_{item_id}.log)",
+        )
         rwd = self.remote_work_dir
         _run(["ssh", remote_host, f"rm -rf {rwd} && mkdir -p {rwd}/{item_id}/_logs {rwd}/prompts"])
 
@@ -1022,6 +1902,7 @@ class WorkLoop:
         rwd = self.remote_work_dir
         today = datetime.now().strftime('%Y-%m-%d')
         log_link = f"[Log]({item_id}/_logs/{ts_str}_{item_id}.log)"
+        note_log_link = f"[Log](_logs/{ts_str}_{item_id}.log)"
 
         item_dir = self.work_dir / item_id
         item_dir.mkdir(parents=True, exist_ok=True)
@@ -1071,14 +1952,17 @@ class WorkLoop:
             self.update_col(item_id, COL_STATUS, "needs-review")
             self.update_col(item_id, COL_BUDGET, budget_label)
             self.prepend_abort_notice(item_id, today, budget, cause)
+            self._inject_or_update_action_callout(item_id, "needs-review", budget, log_link=note_log_link)
             print(msg)
         else:
             self.update_col(item_id, COL_BUDGET, f"${budget}")
             if mode == "resolved":
                 self._move_row_to_done(item_id)
+                self._inject_or_update_action_callout(item_id, "done", budget, log_link=note_log_link)
                 print(f"[{_ts()}] {item_id}: remote resolved — synced back, moved to Done section")
             else:
                 self.update_col(item_id, COL_STATUS, "needs-review")
+                self._inject_or_update_action_callout(item_id, "needs-review", budget, log_link=note_log_link)
                 print(f"[{_ts()}] {item_id}: remote completed — synced back, marked needs-review")
 
     def _ts_str_from_log_col(self, item_id: str, remote_host: str) -> str | None:
@@ -1901,18 +2785,24 @@ class WorkLoop:
     def _build_needs_attention_lines(self) -> list[str]:
         """Build the bullet lines for the Needs Attention section."""
         lines = []
-        # Top-level items in needs-review (active section only).
-        for line in self._read_lines():
-            stripped = line.rstrip('\n')
-            if stripped.startswith('## Done'):
-                break
-            if not stripped.startswith('|'):
-                continue
-            cols = stripped.split('|')
-            if not _is_data_row(cols) or cols[COL_STATUS].strip() != 'needs-review':
-                continue
-            item_id = cols[COL_ID].strip()
-            lines.append(f"- **{item_id}** (needs-review). [Open conversation]({item_id}/CONVERSATION.md)")
+        if self._is_outline_format():
+            items = self._parse_outline_blocks()
+            for item_id, item in items.items():
+                if item["status"] == "needs-review":
+                    lines.append(f"- **{item_id}** (needs-review). [Open conversation]({item_id}/CONVERSATION.md)")
+        else:
+            # Top-level items in needs-review (active section only).
+            for line in self._read_lines():
+                stripped = line.rstrip('\n')
+                if stripped.startswith('## Done'):
+                    break
+                if not stripped.startswith('|'):
+                    continue
+                cols = stripped.split('|')
+                if not _is_data_row(cols) or cols[COL_STATUS].strip() != 'needs-review':
+                    continue
+                item_id = cols[COL_ID].strip()
+                lines.append(f"- **{item_id}** (needs-review). [Open conversation]({item_id}/CONVERSATION.md)")
         # Children that need attention.
         for parent_id in self._get_all_item_ids():
             for child_name, child_status, config in self.get_children(parent_id):
@@ -1928,8 +2818,8 @@ class WorkLoop:
         return lines
 
     def _find_needs_attention_insert_idx(self, text: str) -> int:
-        """Char index to insert the block: before ## Work Items, else ## Done, else end."""
-        for marker in ('\n## Work Items', '\n## Done'):
+        """Char index to insert the block: before ## Active Items, ## Work Items, else ## Done, else end."""
+        for marker in ('\n## Active Items', '\n## Work Items', '\n## Done'):
             idx = text.find(marker)
             if idx != -1:
                 return idx + 1
@@ -1963,6 +2853,10 @@ class WorkLoop:
         if not self.work_file.exists():
             return
         try:
+            if self._is_outline_format():
+                self._refresh_outline_dashboard()
+                return
+
             for parent_id in self._get_all_item_ids():
                 if self.get_children(parent_id):
                     self._sync_parent_report_links(parent_id)
