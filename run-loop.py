@@ -751,9 +751,37 @@ class WorkLoop:
         dst = Path(target_cwd) / self.harness.agent_dir_name()
         if src.resolve() == dst.resolve():
             return
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.copytree(src, dst)
+
+        ignore_names = {"node_modules", ".DS_Store", "__pycache__", ".git"}
+
+        def _sync_tree(s: Path, d: Path) -> None:
+            d.mkdir(parents=True, exist_ok=True)
+            src_entries = {p.name: p for p in s.iterdir() if p.name not in ignore_names}
+
+            if d.exists():
+                for p in d.iterdir():
+                    if p.name in ignore_names:
+                        continue
+                    if p.name not in src_entries:
+                        try:
+                            if p.is_dir() and not p.is_symlink():
+                                shutil.rmtree(p, ignore_errors=True)
+                            else:
+                                p.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+
+            for name, src_path in src_entries.items():
+                dst_path = d / name
+                if src_path.is_dir() and not src_path.is_symlink():
+                    _sync_tree(src_path, dst_path)
+                else:
+                    try:
+                        shutil.copy2(src_path, dst_path)
+                    except OSError:
+                        pass
+
+        _sync_tree(src, dst)
 
     def _run_harness(self, prompt: str, log_file: Path, budget: float, cwd: str | None = None, item_id: str | None = None) -> int:
         """Delegate to the configured harness."""
@@ -799,7 +827,7 @@ class WorkLoop:
         ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         run_start = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
         log_file = item_dir / "_logs" / f"{ts}_{item_id}.log"
-        log_link = f"[Log]({item_id}/_logs/{ts}_{item_id}.debug)"
+        log_link = f"[Log]({item_id}/_logs/{ts}_{item_id}.log)"
 
         mode = self.get_col(item_id, COL_STATUS)  # read trigger status BEFORE overwriting
         self.update_col(item_id, COL_STATUS, "in-progress")
@@ -950,7 +978,7 @@ class WorkLoop:
         agent_dir = self.script_dir / self.harness.agent_dir_name()
         if agent_dir.exists():
             _run(["ssh", remote_host, f"mkdir -p {rwd}/{self.harness.agent_dir_name()}"])
-            _run(["rsync", "-avz", str(agent_dir) + "/", f"{remote_host}:{rwd}/{self.harness.agent_dir_name()}/"])
+            _run(["rsync", "-avz", "--exclude=node_modules", "--exclude=.DS_Store", str(agent_dir) + "/", f"{remote_host}:{rwd}/{self.harness.agent_dir_name()}/"])
 
         title = self.get_item_title(item_id)
         stub = self.build_stub_work_md(item_id, title)
@@ -993,7 +1021,7 @@ class WorkLoop:
         """Sync files back from a completed remote job, update WORK.md, clean up remote."""
         rwd = self.remote_work_dir
         today = datetime.now().strftime('%Y-%m-%d')
-        log_link = f"[Log]({item_id}/_logs/{ts_str}_{item_id}.debug)"
+        log_link = f"[Log]({item_id}/_logs/{ts_str}_{item_id}.log)"
 
         item_dir = self.work_dir / item_id
         item_dir.mkdir(parents=True, exist_ok=True)
@@ -1738,7 +1766,7 @@ class WorkLoop:
         logs_dir = self.work_dir / parent_id / "_logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
         log_file = logs_dir / f"{ts}_{parent_id}_{child_name}.log"
-        log_link = f"[Log]({parent_id}/_logs/{ts}_{parent_id}_{child_name}.debug)"
+        log_link = f"[Log]({parent_id}/_logs/{ts}_{parent_id}_{child_name}.log)"
         print(f"[{_ts()}] Processing child: {parent_id}/{child_name} (type: {child_type}, budget: ${budget}, run_id: {run_id})")
 
         exit_code = self._run_harness(prompt, log_file, budget, cwd=cwd, item_id=f"{parent_id}/{child_name}")
@@ -2341,7 +2369,7 @@ class WorkLoop:
                     mode = self.get_col(item_id, COL_STATUS)
                     print(f"[{_ts()}] Dispatching to {location}: {item_id} (mode: {mode}, budget: ${budget})")
                     self.update_col(item_id, COL_STATUS, "in-progress")
-                    self.update_col(item_id, COL_LOG, f"[Log]({item_id}/_logs/{ts}_{item_id}.debug)")
+                    self.update_col(item_id, COL_LOG, f"[Log]({item_id}/_logs/{ts}_{item_id}.log)")
                     self.dispatch_remote(item_id, ts, location, budget, mode=mode)
                     self.wait_for_remote(item_id, ts, location, budget, mode=mode)
                 else:

@@ -3718,6 +3718,35 @@ class TestAgentSync(unittest.TestCase):
             self.assertTrue((tmp / ".opencode" / "agents" / "critic.md").exists())
             self.assertFalse((tmp / ".opencode" / "agents" / "old-agent.md").exists())
 
+    def test_sync_ignores_node_modules_and_transient_files(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            fake_script_dir = tmp / "repo"
+            fake_agent_dir = fake_script_dir / ".opencode"
+            (fake_agent_dir / "agents").mkdir(parents=True)
+            (fake_agent_dir / "agents" / "critic.md").write_text("prompt")
+            (fake_agent_dir / "node_modules" / "some-pkg").mkdir(parents=True)
+            (fake_agent_dir / "node_modules" / "some-pkg" / "index.js").write_text("console.log(1)")
+            (fake_agent_dir / ".DS_Store").write_bytes(b"\x00\x00")
+
+            target_ws = tmp / "workspace"
+            target_ws.mkdir()
+            # Simulate pre-existing node_modules in destination workspace
+            (target_ws / ".opencode" / "node_modules" / "existing-pkg").mkdir(parents=True)
+            (target_ws / ".opencode" / "node_modules" / "existing-pkg" / "lib.js").write_text("existing")
+
+            wl = WorkLoop({"work_dir": target_ws, "harness": {"type": "opencode"}}, script_dir=fake_script_dir)
+            wl._sync_agent_dir(str(target_ws))
+
+            # Agents should be synced
+            self.assertTrue((target_ws / ".opencode" / "agents" / "critic.md").exists())
+            # Transient files should not be copied from source
+            self.assertFalse((target_ws / ".opencode" / ".DS_Store").exists())
+            self.assertFalse((target_ws / ".opencode" / "node_modules" / "some-pkg").exists())
+            # Existing node_modules in workspace should not be destroyed or crash
+            self.assertTrue((target_ws / ".opencode" / "node_modules" / "existing-pkg" / "lib.js").exists())
+
+
 
 class TestPromptLoading(unittest.TestCase):
     """Verify correct prompt file is loaded for each mode."""
