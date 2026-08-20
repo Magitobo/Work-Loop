@@ -35,7 +35,7 @@ pytestmark = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 # Import run-loop.py
 # ---------------------------------------------------------------------------
-_HERE = Path(__file__).parent
+_HERE = Path(__file__).parent.parent
 _MOD_PATH = _HERE / "run-loop.py"
 spec = importlib.util.spec_from_file_location("run_loop", _MOD_PATH)
 run_loop = importlib.util.module_from_spec(spec)

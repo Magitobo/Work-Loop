@@ -11,7 +11,7 @@ import re
 import unittest
 from pathlib import Path
 
-_HERE = Path(__file__).parent
+_HERE = Path(__file__).parent.parent
 
 # ---------------------------------------------------------------------------
 # Simple YAML frontmatter parser (no PyYAML dependency)

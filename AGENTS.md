@@ -56,7 +56,7 @@ MyNotebook/
 | `prompts/UPDATE-RESEARCH-PROMPT.md` | Prompt for `research` items + child research (unified parent/child modes) |
 | `prompts/TASK-PROMPT.md` | Prompt for child task agents (scan + propose, never execute) |
 | `test_run_loop.py` | Unit tests (+ optional remote integration test) |
-| `test_e2e.py` | E2E tests (run the real harness; opt-in via `ENABLE_E2E_TESTS`) |
+| `tests/test_e2e.py` | E2E tests (run the real harness; opt-in via `ENABLE_E2E_TESTS`) |
 
 ## WORK.md Table Schema
 
@@ -242,13 +242,13 @@ All failures set status to `needs-review` and prepend an abort notice to `CONVER
 ## Running Tests
 
 ```bash
-python3 -m pytest test_run_loop.py -v
+python3 -m pytest tests/ -v
 # Remote integration test runs automatically if remote is reachable
 ```
 
-E2E tests (`test_e2e.py`) run the real harness and are opt-in:
+E2E tests (`tests/test_e2e.py`) run the real harness and are opt-in:
 
 ```bash
-ENABLE_E2E_TESTS=1 pytest test_e2e.py -v   # run e2e in the foreground
+ENABLE_E2E_TESTS=1 pytest tests/test_e2e.py -v   # run e2e in the foreground
 ENABLE_BACKGROUND_E2E=1 pytest             # dispatch e2e in background after the unit suite
 ```

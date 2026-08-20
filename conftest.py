@@ -19,7 +19,7 @@ _E2E_STATE = "e2e_state.json"
 # foreground. ENABLE_BACKGROUND_E2E must NOT un-ignore here: the background
 # dispatcher (pytest_sessionfinish) spawns its own e2e process, and un-ignoring
 # would also run the e2e suite in the foreground (double run).
-collect_ignore = [] if os.environ.get("ENABLE_E2E_TESTS") else ["test_e2e.py"]
+collect_ignore = [] if os.environ.get("ENABLE_E2E_TESTS") else ["tests/test_e2e.py"]
 
 
 def pytest_configure(config):
@@ -84,7 +84,7 @@ def pytest_sessionfinish(session, exitstatus):
     if os.environ.get("PYTEST_E2E"):
         return  # Don't recurse
 
-    e2e_cmd = [sys.executable, "-m", "pytest", "test_e2e.py", "-v", "--tb=short"]
+    e2e_cmd = [sys.executable, "-m", "pytest", "tests/test_e2e.py", "-v", "--tb=short"]
     with open(_E2E_LOG, "w") as log:
         proc = subprocess.Popen(
             e2e_cmd,
