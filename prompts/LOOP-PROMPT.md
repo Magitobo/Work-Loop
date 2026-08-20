@@ -197,7 +197,7 @@ After your approval, create the child folder, RUNS.md, and add the row to WORK-C
 
 ### Creating a Child Task Agent (Requires Your Approval)
 
-For recurring vault maintenance, file organization, or other local tasks:
+For recurring vault maintenance, log analysis, file organization, or other local tasks:
 
 ```
 ### Proposals
@@ -206,15 +206,19 @@ For recurring vault maintenance, file organization, or other local tasks:
 
 **RUNS.md to create at `children/{name}/RUNS.md`:**
 \`\`\`markdown
-## Config
+---
 type: task
 parent: {ITEM_ID}
 title: {title}
-note_path: ../context/{suggestions-file}.md
+living_note_path: null  # or ../context/{suggestions-file}.md
 schedule: {cron}
+---
 
 ## Prompt
-{detailed instructions: what to scan, criteria for proposals}
+{instructions: what to scan/run, criteria for proposals}
+# Use relative paths or prompt variables ({ITEM_DIR}, {PARENT_DIR}, {WORK_LOOP_DIR}, {run_id}).
+# Example: python3 "{ITEM_DIR}/analyze.py" --output "{ITEM_DIR}/runs/{run_id}/task.md"
+# Never hardcode absolute system paths (e.g. /Users/...).
 \`\`\`
 
 **WORK-CHILDREN.md row to add:**
@@ -283,6 +287,7 @@ Synthesize child run results in your CONVERSATION.md findings:
 
 - Child agents write to parent's `context/` via relative `note_path` (e.g. `../context/file.md`)
 - Each child must have a unique `note_path` — the loop enforces this
+- **Path Portability & Variables:** Child agents run with `cwd` set to `WORK_LOOP_DIR`. Never hardcode absolute system paths (e.g. `/Users/...` or vault roots) in `RUNS.md` prompts. Use `{ITEM_DIR}`, `{PARENT_DIR}`, `{WORK_LOOP_DIR}`, `{run_id}`, or relative paths.
 - Children have their own budget from WORK-CHILDREN.md Budget column (default: global)
 - You create/update/delete children through proposals. You can pause/resume directly.
 - Never write to WORK.md or WORK-CHILDREN.md's Status column — the loop handles that

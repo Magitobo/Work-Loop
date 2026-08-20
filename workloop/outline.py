@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 
 from .constants import *
-from .utils import _ts
+from .utils import _ts, _is_table_separator, _is_table_header
 
 
 class OutlineMixin:
@@ -46,8 +46,8 @@ class OutlineMixin:
 
             if current_section == "active":
                 # Case 1: Table row in Active Items
-                is_separator = bool(re.match(r'^[|\s:\-]+$', stripped))
-                is_header = any(h in stripped.lower() for h in ("| task", "| status", "| conversation", "| last updated"))
+                is_separator = _is_table_separator(stripped)
+                is_header = _is_table_header(stripped)
                 if stripped.startswith("|") and not is_separator and not is_header:
                     cells = [c.strip() for c in stripped.split("|")[1:-1]]
                     if len(cells) >= 3:
@@ -278,10 +278,10 @@ class OutlineMixin:
             elif stripped.startswith("## "):
                 in_new_section = False
                 continue
-            if in_new_section and (stripped.startswith("- [ ]") or stripped.startswith("- ") or stripped.startswith("|")):
-                if stripped.startswith("<!--") or stripped.startswith("|---") or stripped.startswith("| Task"):
+            if in_new_section and (stripped.startswith("- [x]") or stripped.startswith("- [X]")):
+                if stripped.startswith("<!--"):
                     continue
-                m = re.match(r'^[ \t]*-\s*(?:\[\s*\]\s*)?(?:\*\*(?P<id>[^*]+)\*\*)?\s*(?P<prompt>.+)', stripped)
+                m = re.match(r'^[ \t]*-\s*\[[xX]\]\s*(?:\*\*(?P<id>[^*]+)\*\*)?\s*(?P<prompt>.+)', stripped)
                 if m and m.group('prompt'):
                     prompt = m.group('prompt').strip()
                     if prompt.startswith("<!--"):
@@ -303,10 +303,10 @@ class OutlineMixin:
             elif stripped.startswith("## "):
                 in_new_section = False
                 continue
-            if in_new_section and (stripped.startswith("- [ ]") or stripped.startswith("- ") or stripped.startswith("|")):
-                if stripped.startswith("<!--") or stripped.startswith("|---"):
+            if in_new_section and (stripped.startswith("- [x]") or stripped.startswith("- [X]")):
+                if stripped.startswith("<!--"):
                     continue
-                m = re.match(r'^[ \t]*-\s*(?:\[\s*\]\s*)?(?:\*\*(?P<id>[^*]+)\*\*)?\s*(?P<prompt>.+)', stripped)
+                m = re.match(r'^[ \t]*-\s*\[[xX]\]\s*(?:\*\*(?P<id>[^*]+)\*\*)?\s*(?P<prompt>.+)', stripped)
                 if m and m.group('prompt'):
                     prompt = m.group('prompt').strip()
                     matched_id = m.group('id').strip() if m.group('id') else self._slugify_title(prompt)
@@ -331,7 +331,7 @@ class OutlineMixin:
             elif stripped.startswith("## "):
                 in_new_section = False
 
-            if in_new_section and not removed and (stripped.startswith("- [ ]") or stripped.startswith("- ") or stripped.startswith("|")):
+            if in_new_section and not removed and (stripped.startswith("- [x]") or stripped.startswith("- [X]")):
                 if item_id in stripped or prompt in stripped:
                     removed = True
                     continue
@@ -354,8 +354,12 @@ class OutlineMixin:
         if active_has_table:
             row = f"| [{prompt}]({item_id}/CONVERSATION.md) | ready | {today} | | {item_id} |\n"
             insert_pos = active_idx
-            while insert_pos < len(new_lines) and (new_lines[insert_pos].strip().startswith("|---") or new_lines[insert_pos].strip().startswith("|:---") or new_lines[insert_pos].strip().startswith("| |") or new_lines[insert_pos].strip().startswith("| Task") or not new_lines[insert_pos].strip()):
-                insert_pos += 1
+            while insert_pos < len(new_lines):
+                s = new_lines[insert_pos].strip()
+                if not s or _is_table_header(s) or _is_table_separator(s):
+                    insert_pos += 1
+                else:
+                    break
             new_lines.insert(insert_pos, row)
         else:
             block = f"\n- [ ] [{prompt}]({item_id}/CONVERSATION.md) · status: ready · {item_id}\n"
@@ -533,8 +537,12 @@ class OutlineMixin:
         if done_idx >= 0:
             if done_has_table:
                 insert_pos = done_idx
-                while insert_pos < len(new_lines) and (new_lines[insert_pos].strip().startswith("|---") or new_lines[insert_pos].strip().startswith("|:---") or new_lines[insert_pos].strip().startswith("| Task") or not new_lines[insert_pos].strip()):
-                    insert_pos += 1
+                while insert_pos < len(new_lines):
+                    s = new_lines[insert_pos].strip()
+                    if not s or _is_table_header(s) or _is_table_separator(s):
+                        insert_pos += 1
+                    else:
+                        break
                 new_lines.insert(insert_pos, done_line)
             else:
                 new_lines.insert(done_idx, done_line)
@@ -567,8 +575,12 @@ class OutlineMixin:
         if active_has_table:
             row = f"| [{title}]({item_id}/CONVERSATION.md) | ready | {today} | | {item_id} |\n"
             insert_pos = active_idx
-            while insert_pos < len(lines) and (lines[insert_pos].strip().startswith("|---") or lines[insert_pos].strip().startswith("|:---") or lines[insert_pos].strip().startswith("| Task") or not lines[insert_pos].strip()):
-                insert_pos += 1
+            while insert_pos < len(lines):
+                s = lines[insert_pos].strip()
+                if not s or _is_table_header(s) or _is_table_separator(s):
+                    insert_pos += 1
+                else:
+                    break
             lines.insert(insert_pos, row)
         else:
             block = f"\n- [ ] [{title}]({item_id}/CONVERSATION.md) · status: ready · {item_id}\n"
@@ -603,15 +615,16 @@ class OutlineMixin:
                 reason_str = f" — {reason}" if reason else ""
                 sched_str = f" ({sched})" if sched else ""
                 title = config.get('title', child_name)
+                target_str = f" → [{title}]({relpath})" if relpath else ""
 
                 if item.get("format") == "table":
-                    child_badge = f"<br>↳ {child_name}{sched_str}{reason_str} → [{title}]({relpath})"
+                    child_badge = f"<br>↳ [{child_name}]({parent_id}/children/{child_name}/RUNS.md){sched_str}{reason_str}{target_str}"
                     cells = [c.strip() for c in item["lines"][0].split("|")[1:-1]]
                     task_idx = 1 if len(cells) >= 3 and cells[0] in ("[ ]", "[x]", "[X]", "") else 0
                     if task_idx < len(cells):
                         task_val = cells[task_idx]
                         if f"{child_name}" in task_val:
-                            task_val = re.sub(rf"<br>↳\s*`?{re.escape(child_name)}`?[^<]*", child_badge, task_val)
+                            task_val = re.sub(rf"<br>↳\s*`?\[?{re.escape(child_name)}\]?(?:\([^)]*\))?[^<]*", child_badge, task_val)
                         else:
                             task_val += child_badge
                         cells[task_idx] = task_val
@@ -620,10 +633,10 @@ class OutlineMixin:
                             item["lines"][0] = new_row
                             changed = True
                 else:
-                    child_line = f"  - Child: **{child_name}** `status: {child_status}`{sched_str}{reason_str} → [{title}]({relpath})\n"
+                    child_line = f"  - Child: **[{child_name}]({parent_id}/children/{child_name}/RUNS.md)** `status: {child_status}`{sched_str}{reason_str}{target_str}\n"
                     found = False
                     for idx, l in enumerate(item["lines"]):
-                        if re.search(rf"Child:\s*\*\*{re.escape(child_name)}\*\*", l):
+                        if re.search(rf"Child:\s*\*\*\[?{re.escape(child_name)}\]?", l):
                             if item["lines"][idx] != child_line:
                                 item["lines"][idx] = child_line
                                 changed = True

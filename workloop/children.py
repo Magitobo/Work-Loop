@@ -14,7 +14,13 @@ class ChildrenMixin:
         text = child_path.read_text()
         config = self._parse_config_block(text)
         m = re.search(r'^## Prompt\s*\n(.*?)(?=^##|\Z)', text, re.MULTILINE | re.DOTALL)
-        config['instruction'] = m.group(1).strip() if m else ''
+        if m:
+            config['instruction'] = m.group(1).strip()
+        elif text.startswith('---'):
+            fm_end = re.search(r'^---\s*\n.*?\n---\s*\n(.*)', text, re.DOTALL)
+            config['instruction'] = fm_end.group(1).strip() if fm_end else ''
+        else:
+            config['instruction'] = ''
         return config
 
     def _get_all_item_ids(self) -> list[str]:
@@ -163,18 +169,19 @@ class ChildrenMixin:
         return self.max_budget
 
     def _validate_note_path_uniqueness(self, parent_id: str, child_name: str) -> tuple[bool, str | None]:
-        """Check for duplicate note_path among siblings. Returns (is_unique, conflicting_child_name)."""
+        """Check for duplicate living_note_path among siblings. Returns (is_unique, conflicting_child_name)."""
         children = self.get_children(parent_id)
         target_note = None
         for cname, _, cfg in children:
             if cname == child_name:
-                target_note = cfg.get('note_path', '')
+                target_note = cfg.get('living_note_path') or cfg.get('note_path', '')
         if not target_note:
             return True, None
         for cname, _, cfg in children:
             if cname == child_name:
                 continue
-            if cfg.get('note_path', '') == target_note:
+            sibling_note = cfg.get('living_note_path') or cfg.get('note_path', '')
+            if sibling_note == target_note:
                 return False, cname
         return True, None
 
@@ -265,11 +272,13 @@ class ChildrenMixin:
         instruction = config.get('instruction', '')
         parent_dir = str(self.work_dir / parent_id)
         item_dir = str(child_dir)
+        living_note_path = config.get('living_note_path') or config.get('note_path', '')
         prompt = (
             f"{self._read_base_prompt()}"
             f"{prompt_text}\n\n"
             f"title: {config.get('title', '')}\n"
-            f"note_path: {config.get('note_path', '')}\n"
+            f"living_note_path: {living_note_path}\n"
+            f"note_path: {living_note_path}\n"
             f"sources:\n{sources_str}\n"
             f"instruction:\n{instruction}\n"
             f"run_id: {run_id}\n"
@@ -315,10 +324,14 @@ class ChildrenMixin:
             summary = f"{child_type.capitalize()} complete"
             summary_path = run_dir / summary_file
             if summary_path.exists():
-                rlines = summary_path.read_text().split('\n')
-                if len(rlines) > 1:
-                    summary = rlines[1].strip('# -').strip()
-            self._append_research_run(child_name, run_id, summary, runs_path=runs_path)
+                non_empty = [
+                    l.strip('# -').strip()
+                    for l in summary_path.read_text().splitlines()
+                    if l.strip() and not l.strip().startswith(('[[', '<!--'))
+                ]
+                if non_empty:
+                    summary = non_empty[0]
+            self._append_research_run(child_name, run_id, summary, status='done', runs_path=runs_path)
 
             if config.get('schedule'):
                 self._update_child_status(parent_id, child_name, 'scheduled')
@@ -341,12 +354,12 @@ class ChildrenMixin:
                         print(f"[{_ts()}] {parent_id}/{child_name}: stale running status — parent agent should handle")
 
     def _resolve_child_note(self, parent_id: str, config: dict) -> Path | None:
-        """Resolve a child's note_path to an absolute Path (or None if unset).
+        """Resolve a child's living_note_path to an absolute Path (or None if unset).
 
         Child note_path values are stored relative to the parent's `children/` directory,
         so `../context/file.md` resolves to `{parent_id}/context/file.md`.
         """
-        note_path = config.get('note_path', '')
+        note_path = config.get('living_note_path') or config.get('note_path', '')
         if not note_path:
             return None
         base = self.work_dir / parent_id / "children"

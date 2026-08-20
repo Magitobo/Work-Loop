@@ -6,7 +6,7 @@ Each iteration runs a research cycle on ONE item. The script determines which it
 - Your job is to **research and update**, not to implement or analyze broadly
 - Fetch and read each source URL listed in the research config
 - Compare findings against the existing note — identify new information, outdated claims, and gaps
-- Write an updated version of the note (overwrite in-place)
+- Write an updated version of the living note at `living_note_path` (overwrite in-place), if configured
 - Write a research summary to `{ITEM_DIR}/runs/{run_id}/research.md`
 - Use Obsidian wiki links `[[filename]]` for all references
 - Any file you create must include a back-link to `[[{BACKLINK_TARGET}]]` near the top

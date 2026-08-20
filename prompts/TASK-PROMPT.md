@@ -7,7 +7,7 @@ Each iteration runs a task cycle. You scan files or directories and propose acti
 - **Conditional execution:** If the instruction below explicitly includes execution instructions (e.g. "execute high-confidence moves via the obsidian CLI"), you MAY execute those actions. Otherwise, do NOT execute — only propose. Never execute actions the instruction did not explicitly authorize.
 - Read the instruction below to understand what to scan and what criteria to apply
 - List each item you find with your proposed action
-- Write your suggestions to the note at `note_path` (overwrite in-place). **`note_path` is relative to the parent item's `children/` directory, NOT to your own ITEM_DIR** (e.g. `../context/foo.md` → `{PARENT_DIR}/context/foo.md`). Never resolve it relative to your own directory.
+- Write your suggestions to the living note at `living_note_path` (overwrite in-place), if configured. **`living_note_path` is relative to the parent item's `children/` directory, NOT to your own ITEM_DIR** (e.g. `../context/foo.md` → `{PARENT_DIR}/context/foo.md`). Never resolve it relative to your own directory. If no living note is configured (empty/none), write your report directly to `{ITEM_DIR}/runs/{run_id}/task.md`.
 - Write a summary to `{ITEM_DIR}/runs/{run_id}/task.md`
 - Use Obsidian wiki links `[[filename]]` for all references
 - Any file you create must include a back-link to `[[{BACKLINK_TARGET}]]` near the top

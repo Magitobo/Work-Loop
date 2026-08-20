@@ -15,7 +15,7 @@ from .harness import ClaudeHarness, OpenCodeHarness
 from .outline import OutlineMixin
 from .remote import RemoteMixin
 from .scripts import ScriptsMixin
-from .utils import _is_data_row, _ts
+from .utils import _is_data_row, _ts, _is_table_separator
 
 
 class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, DashboardMixin):
@@ -264,7 +264,7 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
         done_table_insert_idx = -1
         if done_section_start >= 0:
             for i in range(done_section_start, len(lines)):
-                if lines[i].rstrip('\n').startswith('| --'):
+                if _is_table_separator(lines[i]):
                     done_table_insert_idx = i + 1
                     break
 
@@ -307,7 +307,7 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
         done_table_insert_idx = -1
         if done_section_start >= 0:
             for i in range(done_section_start, len(lines)):
-                if lines[i].rstrip('\n').startswith('| --'):
+                if _is_table_separator(lines[i]):
                     done_table_insert_idx = i + 1
                     break
 
@@ -348,7 +348,7 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
             stripped = line.rstrip('\n')
             if stripped.startswith('## Done'):
                 in_active = False
-            if in_active and stripped.startswith('| --'):
+            if in_active and _is_table_separator(stripped):
                 insert_idx = i + 1
                 break
 
@@ -529,11 +529,14 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
             instruction = config.get('instruction', '')
 
             item_dir = str(self.work_dir / item_id)
+            title = config.get('title', '')
+            living_note_path = config.get('living_note_path') or config.get('note_path', '')
             prompt = (
                 f"{self._read_base_prompt()}"
                 f"{prompt_text}\n\n"
-                f"title: {config.get('title', '')}\n"
-                f"note_path: {config.get('note_path', '')}\n"
+                f"title: {title}\n"
+                f"living_note_path: {living_note_path}\n"
+                f"note_path: {living_note_path}\n"
                 f"sources:\n{sources_str}\n"
                 f"instruction:\n{instruction}\n"
                 f"\nBACKLINK_TARGET: CONVERSATION\n"
@@ -610,11 +613,15 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
                 if latest_run:
                     research_file = run_dir / latest_run / "research.md"
                     if research_file.exists():
-                        lines = research_file.read_text().split('\n')
-                        summary = lines[1].strip('# -').strip() if len(lines) > 1 else "Research complete"
+                        non_empty = [
+                            l.strip('# -').strip()
+                            for l in research_file.read_text().splitlines()
+                            if l.strip() and not l.strip().startswith(('[[', '<!--'))
+                        ]
+                        summary = non_empty[0] if non_empty else "Research complete"
                     else:
                         summary = "Research complete"
-                    self._append_research_run(item_id, latest_run, summary)
+                    self._append_research_run(item_id, latest_run, summary, status='done')
                 if config.get('schedule'):
                     self.update_col(item_id, COL_STATUS, "scheduled")
                     self._inject_or_update_action_callout(item_id, "scheduled", budget, log_link=note_log_link)

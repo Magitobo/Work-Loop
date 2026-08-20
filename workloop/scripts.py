@@ -380,13 +380,14 @@ class ScriptsMixin:
         run_dir.mkdir(parents=True, exist_ok=True)
         return run_dir
 
-    def _append_research_run(self, item_id: str, run_id: str, summary: str, runs_path: Path | None = None) -> None:
+    def _append_research_run(self, item_id: str, run_id: str, summary: str, status: str = 'done', runs_path: Path | None = None) -> None:
         """Append a new row to RUNS.md run history table for research items."""
         runs_file = runs_path if runs_path is not None else self.work_dir / item_id / "RUNS.md"
         today = datetime.now().strftime('%Y-%m-%d')
         log_link = f"[Log](runs/{run_id}/)"
-        summary_link = f"[{summary}](runs/{run_id}/)"
-        row = f"| {run_id} | {summary_link} | running | {today} | {log_link} |\n"
+        summary_text = summary.strip() or f"{run_id} run"
+        summary_link = f"[{summary_text}](runs/{run_id}/)"
+        row = f"| {run_id} | {summary_link} | {status} | {today} | {log_link} |\n"
         text = runs_file.read_text() if runs_file.exists() else ""
         lines = text.splitlines(keepends=True)
         table_sep_idx = -1
@@ -481,33 +482,30 @@ class ScriptsMixin:
         )
 
     def _parse_config_block(self, text: str) -> dict:
-        """Parse a ## Config block from text, return normalized dict."""
-        config = {
-            'command': '', 'params': '', 'schedule': '',
-            'location': '', 'locations': [],
-            'heartbeat_file': '', 'timeout': DEFAULT_TIMEOUT_MIN,
-            'aggregation_script': '', 'analysis_prompt': '',
-            'type': '', 'title': '', 'note_path': '', 'sources': [],
-            'parent': '',
-        }
-        m = re.search(r'^## Config\s*\n(.*?)(?=^##|\Z)', text, re.MULTILINE | re.DOTALL)
-        if not m:
-            return config
+        """Parse YAML frontmatter (---) or ## Config block from text, return normalized dict."""
+        config = self._empty_config()
+        fm_match = re.match(r'^---\s*\n(.*?)\n---(?:\s*\n|\Z)', text, re.DOTALL)
+        if fm_match:
+            block_text = fm_match.group(1)
+        else:
+            m = re.search(r'^## Config\s*\n(.*?)(?=^##|\Z)', text, re.MULTILINE | re.DOTALL)
+            if not m:
+                return config
+            block_text = m.group(1)
+
         in_locations = False
         in_sources = False
-        for line in m.group(1).splitlines():
+        for line in block_text.splitlines():
             stripped = line.strip()
-            if not stripped:
-                in_locations = False
-                in_sources = False
+            if not stripped or stripped.startswith('#'):
                 continue
-            if in_locations and line.startswith('  '):
-                loc = stripped.strip('`')
+            if in_locations and (line.startswith('  ') or stripped.startswith('- ')):
+                loc = stripped.lstrip('- ').strip().strip('`').strip('\'"')
                 if loc:
                     config['locations'].append(loc)
                 continue
-            if in_sources and line.startswith('  '):
-                src = stripped.strip('`')
+            if in_sources and (line.startswith('  ') or stripped.startswith('- ')):
+                src = stripped.lstrip('- ').strip().strip('`').strip('\'"')
                 if src:
                     config['sources'].append(src)
                 continue
@@ -517,7 +515,9 @@ class ScriptsMixin:
                 continue
             key, _, val = line.partition(':')
             key_n = key.strip().lower().replace(' ', '_').replace('-', '_')
-            val = val.strip().strip('`')
+            val = val.strip().strip('`').strip('\'"')
+            if val.lower() in ('null', 'none', '~'):
+                val = ''
             if key_n == 'command':
                 config['command'] = val
             elif key_n == 'params':
@@ -538,14 +538,15 @@ class ScriptsMixin:
                 except ValueError:
                     pass
             elif key_n == 'aggregation_script':
-                config['aggregation_script'] = val.strip('`')
+                config['aggregation_script'] = val
             elif key_n == 'analysis_prompt':
                 config['analysis_prompt'] = val
             elif key_n == 'type':
                 config['type'] = val
             elif key_n == 'title':
                 config['title'] = val
-            elif key_n == 'note_path':
+            elif key_n in ('living_note_path', 'note_path'):
+                config['living_note_path'] = val
                 config['note_path'] = val
             elif key_n == 'parent':
                 config['parent'] = val
@@ -560,7 +561,13 @@ class ScriptsMixin:
         config = self._parse_config_block(text)
         # Parse Prompt block
         m = re.search(r'^## Prompt\s*\n(.*?)(?=^##|\Z)', text, re.MULTILINE | re.DOTALL)
-        config['instruction'] = m.group(1).strip() if m else ''
+        if m:
+            config['instruction'] = m.group(1).strip()
+        elif text.startswith('---'):
+            fm_end = re.search(r'^---\s*\n.*?\n---\s*\n(.*)', text, re.DOTALL)
+            config['instruction'] = fm_end.group(1).strip() if fm_end else ''
+        else:
+            config['instruction'] = ''
         return config
 
     def _empty_config(self) -> dict:
@@ -570,7 +577,7 @@ class ScriptsMixin:
             'location': '', 'locations': [],
             'heartbeat_file': '', 'timeout': DEFAULT_TIMEOUT_MIN,
             'aggregation_script': '', 'analysis_prompt': '',
-            'type': '', 'title': '', 'note_path': '', 'sources': [],
+            'type': '', 'title': '', 'living_note_path': '', 'note_path': '', 'sources': [],
             'parent': '', 'instruction': '',
         }
 

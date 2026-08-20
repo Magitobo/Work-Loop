@@ -2465,7 +2465,7 @@ class TestResearchAppendRun(unittest.TestCase):
         text = (Path(tmp) / "RES-001" / "RUNS.md").read_text()
         self.assertIn("20260717-001", text)
         self.assertIn("Added 3 new papers", text)
-        self.assertIn("running", text)
+        self.assertIn("done", text)
         self.assertIn("runs/20260717-001/", text)
 
     def test_append_research_run_creates_header(self):
@@ -2737,6 +2737,56 @@ class TestParseChildRunsMd(unittest.TestCase):
             self.assertIn("https://www.walkscore.com", config["sources"])
             self.assertEqual(config["schedule"], "0 */6 * * *")
             self.assertIn("walkability", config["instruction"])
+
+    def test_parses_yaml_frontmatter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = _make_workloop(tmp)
+            runs_md = (
+                "---\n"
+                "type: task\n"
+                "parent: PARENT-001\n"
+                "title: Log Analyzer\n"
+                "living_note_path: null\n"
+                "schedule: 0 1 * * *\n"
+                "---\n\n"
+                "## Prompt\n"
+                "Analyze the logs.\n"
+            )
+            child_path = Path(tmp) / "RUNS.md"
+            child_path.write_text(runs_md)
+            config = wl._parse_child_runs_md(child_path)
+            self.assertEqual(config["type"], "task")
+            self.assertEqual(config["parent"], "PARENT-001")
+            self.assertEqual(config["title"], "Log Analyzer")
+            self.assertEqual(config["living_note_path"], "")
+            self.assertEqual(config["note_path"], "")
+            self.assertEqual(config["schedule"], "0 1 * * *")
+            self.assertIn("Analyze the logs", config["instruction"])
+
+    def test_parses_yaml_frontmatter_with_dash_lists_and_living_note(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = _make_workloop(tmp)
+            runs_md = (
+                "---\n"
+                "type: research\n"
+                "parent: PARENT-001\n"
+                "title: Area Research\n"
+                "living_note_path: ../context/area.md\n"
+                "sources:\n"
+                "  - https://example.com/source1\n"
+                "  - https://example.com/source2\n"
+                "---\n\n"
+                "## Prompt\n"
+                "Research instructions.\n"
+            )
+            child_path = Path(tmp) / "RUNS.md"
+            child_path.write_text(runs_md)
+            config = wl._parse_child_runs_md(child_path)
+            self.assertEqual(config["type"], "research")
+            self.assertEqual(config["living_note_path"], "../context/area.md")
+            self.assertEqual(config["note_path"], "../context/area.md")
+            self.assertEqual(config["sources"], ["https://example.com/source1", "https://example.com/source2"])
+            self.assertIn("Research instructions", config["instruction"])
 
     def test_missing_runs_md_returns_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -3128,6 +3178,19 @@ class TestAppendResearchRunWithPath(unittest.TestCase):
             text = runs_path.read_text()
             self.assertIn("20260105-001", text)
             self.assertIn("Walkability update", text)
+            self.assertIn("done", text)
+
+    def test_appends_with_empty_summary_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = _make_parent_with_children(tmp, "PARENT-001", [
+                {"name": "areas", "status": "ready", "runs_md": _CHILD_RUNS_MD}
+            ])
+            runs_path = Path(tmp) / "PARENT-001" / "children" / "areas" / "RUNS.md"
+            wl._append_research_run("areas", "20260105-002", "", status="done", runs_path=runs_path)
+            text = runs_path.read_text()
+            self.assertIn("20260105-002", text)
+            self.assertIn("[20260105-002 run](runs/20260105-002/)", text)
+            self.assertIn("done", text)
 
 
 class TestChildCronPromotion(unittest.TestCase):
@@ -3891,6 +3954,13 @@ class TestOutlineWorkFormat(unittest.TestCase):
         self.assertIn("ITEM-001", text)
 
     def test_get_new_items_and_initialize_outline(self):
+        # Unchecked item should NOT be picked up
+        self.assertEqual(self.wl.get_new_items(), [])
+        # Checking the box triggers pickup
+        text = (self.work_dir / "WORK-NEW.md").read_text()
+        text = text.replace("- [ ] Explore Canadian banking options", "- [x] Explore Canadian banking options")
+        (self.work_dir / "WORK-NEW.md").write_text(text)
+
         new_items = self.wl.get_new_items()
         self.assertEqual(len(new_items), 1)
         item_id = new_items[0]
@@ -3918,6 +3988,73 @@ class TestOutlineWorkFormat(unittest.TestCase):
         self.wl.insert_work_row("ITEM-099", "New test row", "local")
         self.assertEqual(self.wl.get_col("ITEM-099", COL_STATUS), "ready")
         self.wl.remove_work_row("ITEM-099")
+
+    def test_add_new_item_above_active_items_layout(self):
+        layout = """\
+# Work Loop
+
+## Add New Item
+- [ ] _Add new instructions here and click the check box [X] when done. The loop creates the folder, seeds CONVERSATION.md, and moves it to Active Items_
+
+## Active Items
+
+| Task / Conversation | Status | Last Updated | Log | ID |
+|---|:---:|:---:|:---:|---|
+| [Task one](ITEM-001/CONVERSATION.md) | ready | 2026-08-01 | | ITEM-001 |
+
+## Done
+"""
+        (self.work_dir / "WORK-NEW.md").write_text(layout)
+        # Unchecked template must be ignored
+        self.assertEqual(self.wl.get_new_items(), [])
+
+        # Add a checked item with italic prompt and custom ID
+        updated = layout.replace(
+            "## Add New Item\n",
+            "## Add New Item\n- [X] **EXP-01** _Explore overseas banking options_\n"
+        )
+        (self.work_dir / "WORK-NEW.md").write_text(updated)
+
+        new_items = self.wl.get_new_items()
+        self.assertEqual(new_items, ["EXP-01"])
+
+        self.wl.initialize_new_item("EXP-01")
+        conv_file = self.work_dir / "EXP-01" / "CONVERSATION.md"
+        self.assertTrue(conv_file.exists())
+        self.assertIn("_Explore overseas banking options_", conv_file.read_text())
+
+        # Check that WORK-NEW.md retained template line and added row to Active Items
+        work_text = (self.work_dir / "WORK-NEW.md").read_text()
+        self.assertIn("- [ ] _Add new instructions here", work_text)
+        self.assertNotIn("- [X] **EXP-01**", work_text)
+        self.assertIn("| [_Explore overseas banking options_](EXP-01/CONVERSATION.md) | ready", work_text)
+
+    def test_outline_child_line_links_to_runs_md(self):
+        parent_dir = self.work_dir / "ITEM-001"
+        parent_dir.mkdir(parents=True, exist_ok=True)
+        (parent_dir / "WORK-CHILDREN.md").write_text(
+            "# Child Agents\n\n"
+            "| ID | Title | Status | Last Updated | Budget | Log |\n"
+            "|---|---|---|---|---|---|\n"
+            "| inbox-sorter | [Inbox Sort Suggestions](children/inbox-sorter/RUNS.md) | ready |  |  |  |\n"
+        )
+        child_dir = parent_dir / "children" / "inbox-sorter"
+        child_dir.mkdir(parents=True, exist_ok=True)
+        (child_dir / "RUNS.md").write_text(
+            "## Config\n"
+            "type: task\n"
+            "parent: ITEM-001\n"
+            "title: Inbox Sort Suggestions\n"
+            "note_path: ../context/inbox-sort-suggestions.md\n"
+            "schedule: 0 1 * * *\n"
+        )
+        (parent_dir / "context").mkdir(parents=True, exist_ok=True)
+        (parent_dir / "context" / "inbox-sort-suggestions.md").write_text("suggestions")
+
+        self.wl._refresh_outline_dashboard()
+        text = (self.work_dir / "WORK-NEW.md").read_text()
+        expected = "Child: **[inbox-sorter](ITEM-001/children/inbox-sorter/RUNS.md)** `status: ready` (0 1 * * *) → [Inbox Sort Suggestions](ITEM-001/context/inbox-sort-suggestions.md)"
+        self.assertIn(expected, text)
 class TestStreamlinedTableWorkFormat(unittest.TestCase):
     SAMPLE_TABLE_WORK_MD = """\
 # Work Loop
@@ -3980,6 +4117,92 @@ class TestStreamlinedTableWorkFormat(unittest.TestCase):
         text = (self.work_dir / "WORK-NEW.md").read_text()
         self.assertIn("[Task one]", text)
         self.assertIn("ITEM-001", text)
+
+    def test_table_move_to_done_preserves_separator_position(self):
+        content = """\
+# Work Loop
+
+## Active Items
+
+| Task / Conversation | Status | Last Updated | Log | ID |
+| -------------------------------------------------------------------------------- | :----------: | :----------: | :------------------------------------------------------------------------------: | --------------------- |
+| [Task one](ITEM-001/CONVERSATION.md) | ready | 2026-08-01 | [Log](ITEM-001/_logs/log1.log) | ITEM-001 |
+
+## Add New Item
+
+## Done
+
+| Task / Conversation | Last Updated | Log | ID |
+| -------------------------------------------------------------------------------- | :----------: | :------------------------------------------: | --------- |
+| [Old task](ITEM-000/CONVERSATION.md) | 2026-07-14 | [Log](ITEM-000/_logs/old.log) | ITEM-000 |
+"""
+        (self.work_dir / "WORK-NEW.md").write_text(content)
+        self.wl.update_col("ITEM-001", COL_STATUS, "done")
+        lines = (self.work_dir / "WORK-NEW.md").read_text().splitlines()
+        done_idx = next(i for i, l in enumerate(lines) if l.startswith("## Done"))
+        # Header should be next non-empty line
+        header_idx = next(i for i in range(done_idx + 1, len(lines)) if lines[i].strip())
+        sep_idx = header_idx + 1
+        # Separator line must immediately follow header row
+        self.assertTrue(lines[sep_idx].strip().startswith("| ---") or lines[sep_idx].strip().startswith("| --"))
+        # The newly inserted row must come AFTER the separator
+        item_idx = next(i for i in range(sep_idx + 1, len(lines)) if "ITEM-001" in lines[i])
+        self.assertGreater(item_idx, sep_idx)
+
+    def test_table_child_badge_links_to_runs_md(self):
+        parent_dir = self.work_dir / "ITEM-001"
+        parent_dir.mkdir(parents=True, exist_ok=True)
+        (parent_dir / "CONVERSATION.md").write_text("## 2026-08-01 | User\n\nTask one\n")
+        (parent_dir / "WORK-CHILDREN.md").write_text(
+            "# Child Agents\n\n"
+            "| ID | Title | Status | Last Updated | Budget | Log |\n"
+            "|---|---|---|---|---|---|\n"
+            "| inbox-sorter | [Inbox Sort Suggestions](children/inbox-sorter/RUNS.md) | ready |  |  |  |\n"
+        )
+        child_dir = parent_dir / "children" / "inbox-sorter"
+        child_dir.mkdir(parents=True, exist_ok=True)
+        (child_dir / "RUNS.md").write_text(
+            "## Config\n"
+            "type: task\n"
+            "parent: ITEM-001\n"
+            "title: Inbox Sort Suggestions\n"
+            "note_path: ../context/inbox-sort-suggestions.md\n"
+            "schedule: 0 1 * * *\n"
+        )
+        (parent_dir / "context").mkdir(parents=True, exist_ok=True)
+        (parent_dir / "context" / "inbox-sort-suggestions.md").write_text("suggestions")
+
+        self.wl._refresh_outline_dashboard()
+        text = (self.work_dir / "WORK-NEW.md").read_text()
+        expected = "↳ [inbox-sorter](ITEM-001/children/inbox-sorter/RUNS.md) (0 1 * * *) → [Inbox Sort Suggestions](ITEM-001/context/inbox-sort-suggestions.md)"
+        self.assertIn(expected, text)
+
+    def test_child_agent_in_table_without_note_path(self):
+        parent_dir = self.work_dir / "ITEM-001"
+        parent_dir.mkdir(parents=True, exist_ok=True)
+        (parent_dir / "CONVERSATION.md").write_text("Conversation thread")
+        (parent_dir / "WORK-CHILDREN.md").write_text(
+            "# Child Agents\n\n"
+            "| Name | Title | Status | Last Run | Budget | Log |\n"
+            "|---|---|---|---|---|---|\n"
+            "| log-analyzer | [Work Loop Log Analysis](children/log-analyzer/RUNS.md) | ready | 2026-08-19 | $10.0 | |\n"
+        )
+        child_dir = parent_dir / "children" / "log-analyzer"
+        child_dir.mkdir(parents=True, exist_ok=True)
+        (child_dir / "RUNS.md").write_text(
+            "## Config\n"
+            "type: task\n"
+            "parent: ITEM-001\n"
+            "title: Work Loop Log Analysis\n"
+            "schedule: 0 1 * * *\n"
+        )
+
+        self.wl._refresh_outline_dashboard()
+        text = (self.work_dir / "WORK-NEW.md").read_text()
+        expected = "↳ [log-analyzer](ITEM-001/children/log-analyzer/RUNS.md) (0 1 * * *)"
+        self.assertIn(expected, text)
+        self.assertNotIn("→ [Work Loop Log Analysis]()", text)
+        self.assertNotIn("→ [Work Loop Log Analysis](", text)
 
 
 class TestInNoteActionCenter(unittest.TestCase):
