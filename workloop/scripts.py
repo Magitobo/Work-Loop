@@ -349,29 +349,26 @@ class ScriptsMixin:
         return base / hostname if is_multi else base
 
     def _append_runs_md_row(self, item_id: str, run_id: str, title: str, status: str = 'running') -> None:
-        """Append a new row to RUNS.md run history table."""
+        """Insert a new row to RUNS.md run history table with recent on top."""
         runs_file = self.work_dir / item_id / "RUNS.md"
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = datetime.now().strftime('%Y-%m-%d %H:%M')
         log_link = f"[Log](runs/{run_id}/)"
         row = f"| {run_id} | {title} | {status} | {today} | {log_link} |\n"
         text = runs_file.read_text() if runs_file.exists() else ""
         lines = text.splitlines(keepends=True)
         table_sep_idx = -1
-        last_data_idx = -1
         for i, line in enumerate(lines):
             stripped = line.lstrip()
             if stripped.startswith('| --') or stripped.startswith('|--'):
                 if line.count('|') >= 4:
                     table_sep_idx = i
-            elif table_sep_idx >= 0 and line.startswith('|'):
-                last_data_idx = i
+                    break
         if table_sep_idx < 0:
             header = "\n| ID | Title | Status | Last Updated | Log |\n|---|---|---|---|---|\n"
             text += header + row
             runs_file.write_text(text)
         else:
-            insert_at = (last_data_idx + 1) if last_data_idx >= 0 else (table_sep_idx + 1)
-            lines.insert(insert_at, row)
+            lines.insert(table_sep_idx + 1, row)
             runs_file.write_text("".join(lines))
 
     def _create_run_dir(self, item_id: str, run_id: str) -> Path:
@@ -381,9 +378,9 @@ class ScriptsMixin:
         return run_dir
 
     def _append_research_run(self, item_id: str, run_id: str, summary: str, status: str = 'done', runs_path: Path | None = None) -> None:
-        """Append a new row to RUNS.md run history table for research items."""
+        """Insert a new row to RUNS.md run history table for research/task items with recent on top."""
         runs_file = runs_path if runs_path is not None else self.work_dir / item_id / "RUNS.md"
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = datetime.now().strftime('%Y-%m-%d %H:%M')
         log_link = f"[Log](runs/{run_id}/)"
         summary_text = summary.strip() or f"{run_id} run"
         summary_link = f"[{summary_text}](runs/{run_id}/)"
@@ -391,21 +388,18 @@ class ScriptsMixin:
         text = runs_file.read_text() if runs_file.exists() else ""
         lines = text.splitlines(keepends=True)
         table_sep_idx = -1
-        last_data_idx = -1
         for i, line in enumerate(lines):
             stripped = line.lstrip()
             if stripped.startswith('| --') or stripped.startswith('|--'):
                 if line.count('|') >= 4:
                     table_sep_idx = i
-            elif table_sep_idx >= 0 and line.startswith('|'):
-                last_data_idx = i
+                    break
         if table_sep_idx < 0:
             header = "\n| ID | Summary | Status | Last Updated | Log |\n|---|---|---|---|---|\n"
             text += header + row
             runs_file.write_text(text)
         else:
-            insert_at = (last_data_idx + 1) if last_data_idx >= 0 else (table_sep_idx + 1)
-            lines.insert(insert_at, row)
+            lines.insert(table_sep_idx + 1, row)
             runs_file.write_text("".join(lines))
 
     def _update_runs_md_row_status(self, item_id: str, run_id: str, status: str, runs_path: Path | None = None) -> None:
@@ -413,7 +407,7 @@ class ScriptsMixin:
         runs_file = runs_path if runs_path is not None else self.work_dir / item_id / "RUNS.md"
         if not runs_file.exists():
             return
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = datetime.now().strftime('%Y-%m-%d %H:%M')
         new_lines = []
         for line in runs_file.read_text().splitlines(keepends=True):
             if line.startswith('|'):
@@ -443,7 +437,8 @@ class ScriptsMixin:
                 continue
             row_status = cols[RUNS_COL_STATUS].strip() if len(cols) > RUNS_COL_STATUS else ''
             if status is None or row_status == status:
-                latest = run_id
+                if latest is None or run_id > latest:
+                    latest = run_id
         return latest
 
     def _cron_should_run(self, cron_str: str, now: datetime) -> bool:

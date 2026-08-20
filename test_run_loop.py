@@ -4204,6 +4204,65 @@ class TestStreamlinedTableWorkFormat(unittest.TestCase):
         self.assertNotIn("→ [Work Loop Log Analysis]()", text)
         self.assertNotIn("→ [Work Loop Log Analysis](", text)
 
+    def test_active_items_table_sorted_latest_update_on_top(self):
+        content = """\
+# Work Loop
+
+## Active Items
+
+| Task / Conversation | Status | Last Updated | Log | ID |
+| -------------------------------------------------------------------------------- | :----------: | :----------: | :------------------------------------------------------------------------------: | --------------------- |
+| [Item Old](ITEM-001/CONVERSATION.md) | needs-review | 2026-08-11 | [Log](ITEM-001/_logs/log1.log) | ITEM-001 |
+| [Item Mid](ITEM-002/CONVERSATION.md) | needs-review | 2026-08-17 | [Log](ITEM-002/_logs/log2.log) | ITEM-002 |
+| [Item New](ITEM-003/CONVERSATION.md) | in-progress | 2026-08-18 | [Log](ITEM-003/_logs/log3.log) | ITEM-003 |
+
+## Done
+"""
+        (self.work_dir / "WORK-NEW.md").write_text(content)
+        self.wl._sort_active_items_outline()
+        lines = (self.work_dir / "WORK-NEW.md").read_text().splitlines()
+        active_lines = [l for l in lines if l.startswith("| [Item ")]
+        self.assertEqual(len(active_lines), 3)
+        self.assertIn("ITEM-003", active_lines[0])
+        self.assertIn("ITEM-002", active_lines[1])
+        self.assertIn("ITEM-001", active_lines[2])
+
+    def test_update_col_sorts_active_items_table(self):
+        # In setup: ITEM-001 is 2026-08-01, ITEM-002 is 2026-08-02
+        # Updating ITEM-001 to 2026-08-18 should place it before ITEM-002
+        self.wl.update_col("ITEM-001", COL_LAST_UPDATED, "2026-08-18 10:00")
+        lines = (self.work_dir / "WORK-NEW.md").read_text().splitlines()
+        active_lines = [l for l in lines if l.startswith("| [Task ")]
+        self.assertEqual(len(active_lines), 2)
+        self.assertIn("ITEM-001", active_lines[0])
+        self.assertIn("ITEM-002", active_lines[1])
+        self.assertEqual(self.wl.get_col("ITEM-001", COL_LAST_UPDATED), "2026-08-18 10:00")
+
+    def test_active_items_table_sorted_with_datetime_timestamps(self):
+        content = """\
+# Work Loop
+
+## Active Items
+
+| Task / Conversation | Status | Last Updated | Log | ID |
+| -------------------------------------------------------------------------------- | :----------: | :--------------: | :------------------------------------------------------------------------------: | --------------------- |
+| [Item Morning](ITEM-001/CONVERSATION.md) | needs-review | 2026-08-18 09:30 | [Log](ITEM-001/_logs/log1.log) | ITEM-001 |
+| [Item Night](ITEM-002/CONVERSATION.md) | in-progress | 2026-08-18 22:04 | [Log](ITEM-002/_logs/log2.log) | ITEM-002 |
+| [Item Yesterday](ITEM-003/CONVERSATION.md) | needs-review | 2026-08-17 22:04 | [Log](ITEM-003/_logs/log3.log) | ITEM-003 |
+
+## Done
+"""
+        (self.work_dir / "WORK-NEW.md").write_text(content)
+        self.wl._sort_active_items_outline()
+        lines = (self.work_dir / "WORK-NEW.md").read_text().splitlines()
+        active_lines = [l for l in lines if l.startswith("| [Item ")]
+        self.assertEqual(len(active_lines), 3)
+        self.assertIn("ITEM-002", active_lines[0])  # 2026-08-18 22:04
+        self.assertIn("ITEM-001", active_lines[1])  # 2026-08-18 09:30
+        self.assertIn("ITEM-003", active_lines[2])  # 2026-08-17 22:04
+
+
+
 
 class TestInNoteActionCenter(unittest.TestCase):
     def setUp(self):

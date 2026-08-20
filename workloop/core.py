@@ -499,7 +499,7 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
         item_dir = self.work_dir / item_id
         item_dir.mkdir(parents=True, exist_ok=True)
         (item_dir / "_logs").mkdir(parents=True, exist_ok=True)
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = datetime.now().strftime('%Y-%m-%d %H:%M')
         ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         run_start = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
         log_file = item_dir / "_logs" / f"{ts}_{item_id}.log"

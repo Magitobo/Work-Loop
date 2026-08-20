@@ -83,7 +83,7 @@ class RemoteMixin:
     ) -> None:
         """Sync files back from a completed remote job, update WORK.md, clean up remote."""
         rwd = self.remote_work_dir
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = datetime.now().strftime('%Y-%m-%d %H:%M')
         log_link = f"[Log]({item_id}/_logs/{ts_str}_{item_id}.log)"
         note_log_link = f"[Log](_logs/{ts_str}_{item_id}.log)"
 
@@ -208,7 +208,7 @@ class RemoteMixin:
     def _abort_remote(self, item_id: str, ts_str: str, remote_host: str, budget: float) -> None:
         """Kill the remote Claude process (via .pid), sync back, leave status as abort."""
         rwd = self.remote_work_dir
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = datetime.now().strftime('%Y-%m-%d %H:%M')
 
         # Best-effort kill; ignore errors (process may have already exited)
         subprocess.run(

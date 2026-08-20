@@ -63,7 +63,7 @@ class OutlineMixin:
                                 log_cell = cells[4]
                                 id_cell = cells[5]
                             elif len(cells) == 5:
-                                last_updated = cells[3] if re.match(r'^\d{4}-\d{2}-\d{2}$', cells[3]) else ""
+                                last_updated = cells[3] if re.match(r'^\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?$', cells[3]) else ""
                                 log_cell = cells[3] if not last_updated else cells[4]
                                 id_cell = cells[4] if not last_updated else ""
                             else:
@@ -78,7 +78,7 @@ class OutlineMixin:
                                 log_cell = cells[3]
                                 id_cell = cells[4]
                             elif len(cells) == 4:
-                                last_updated = cells[2] if re.match(r'^\d{4}-\d{2}-\d{2}$', cells[2]) else ""
+                                last_updated = cells[2] if re.match(r'^\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?$', cells[2]) else ""
                                 log_cell = cells[2] if not last_updated else cells[3]
                                 id_cell = cells[3] if not last_updated else ""
                             else:
@@ -151,7 +151,7 @@ class OutlineMixin:
                     budget = m_budget.group(1).strip() if m_budget else f"${self.max_budget}"
                     m_loc = re.search(r"location:\s*`?([^\s·|`]+)`?", block, re.IGNORECASE)
                     location = m_loc.group(1).strip() if m_loc else "local"
-                    m_date = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", block)
+                    m_date = re.search(r"\b(20\d{2}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\b", block)
                     last_updated = m_date.group(1) if m_date else ""
                     m_thread = re.search(r'(?:—\s*|\bThread:\s*)(\[[^\]]+\]\([^)]+\))', block)
                     if not m_thread:
@@ -350,7 +350,7 @@ class OutlineMixin:
         if active_idx < 0:
             active_idx = len(new_lines)
 
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = datetime.now().strftime('%Y-%m-%d %H:%M')
         if active_has_table:
             row = f"| [{prompt}]({item_id}/CONVERSATION.md) | ready | {today} | | {item_id} |\n"
             insert_pos = active_idx
@@ -366,6 +366,7 @@ class OutlineMixin:
             new_lines.insert(active_idx, block)
 
         self._write_lines(new_lines)
+        self._sort_active_items_outline()
 
     def _get_col_outline(self, item_id: str, col_idx: int) -> str:
         items = self._parse_outline_blocks()
@@ -468,8 +469,8 @@ class OutlineMixin:
                         flags=re.IGNORECASE
                     )
             elif col_idx == COL_LAST_UPDATED:
-                if re.search(r'\b(20\d{2}-\d{2}-\d{2})\b', item_lines[0]):
-                    item_lines[0] = re.sub(r'\b(20\d{2}-\d{2}-\d{2})\b', value, item_lines[0])
+                if re.search(r'\b(20\d{2}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\b', item_lines[0]):
+                    item_lines[0] = re.sub(r'\b(20\d{2}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\b', value, item_lines[0])
             elif col_idx == COL_LOG:
                 updated = False
                 for idx, l in enumerate(item_lines):
@@ -496,6 +497,7 @@ class OutlineMixin:
 
         new_lines = lines[:item["start"]] + item_lines + lines[item["end"]:]
         self._write_lines(new_lines)
+        self._sort_active_items_outline()
 
     def _move_done_items_outline(self) -> None:
         items = self._parse_outline_blocks()
@@ -515,7 +517,7 @@ class OutlineMixin:
         new_lines = lines[:item["start"]] + lines[item["end"]:]
         title = item["thread"] or f"[{item_id}]({item_id}/CONVERSATION.md)"
         log_str = item['log'] if item['log'] else ""
-        last_updated = item.get('last_updated', '') or datetime.now().strftime('%Y-%m-%d')
+        last_updated = item.get('last_updated', '') or datetime.now().strftime('%Y-%m-%d %H:%M')
 
         done_idx = -1
         done_has_table = False
@@ -571,7 +573,7 @@ class OutlineMixin:
         if active_idx < 0:
             active_idx = len(lines)
 
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = datetime.now().strftime('%Y-%m-%d %H:%M')
         if active_has_table:
             row = f"| [{title}]({item_id}/CONVERSATION.md) | ready | {today} | | {item_id} |\n"
             insert_pos = active_idx
@@ -586,6 +588,7 @@ class OutlineMixin:
             block = f"\n- [ ] [{title}]({item_id}/CONVERSATION.md) · status: ready · {item_id}\n"
             lines.insert(active_idx, block)
         self._write_lines(lines)
+        self._sort_active_items_outline()
 
     def _remove_work_row_outline(self, item_id: str) -> None:
         if not self.work_file.exists():
@@ -596,6 +599,130 @@ class OutlineMixin:
             item = items[item_id]
             new_lines = lines[:item["start"]] + lines[item["end"]:]
             self._write_lines(new_lines)
+
+    def _extract_date_from_outline_row(self, line: str) -> str:
+        """Extract the Last Updated date/time (YYYY-MM-DD or YYYY-MM-DD HH:MM) from a table row or bullet line."""
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            cells = [c.strip() for c in stripped.split("|")[1:-1]]
+            if cells:
+                if cells[0] in ("[ ]", "[x]", "[X]", ""):
+                    if len(cells) >= 6:
+                        date_cell = cells[3]
+                    elif len(cells) == 5:
+                        date_cell = cells[3] if re.match(r'^\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?$', cells[3]) else ""
+                    else:
+                        date_cell = ""
+                else:
+                    if len(cells) >= 5:
+                        date_cell = cells[2]
+                    elif len(cells) == 4:
+                        date_cell = cells[2] if re.match(r'^\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?$', cells[2]) else ""
+                    else:
+                        date_cell = ""
+                m = re.search(r'\b(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\b', date_cell)
+                if m:
+                    return m.group(1)
+        m = re.search(r'\b(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\b', line)
+        return m.group(1) if m else ""
+
+    def _sort_active_items_outline(self) -> None:
+        """Sort rows under ## Active Items by Last Updated descending (latest on top)."""
+        if not self.work_file.exists():
+            return
+        lines = self._read_lines()
+        active_start = -1
+        active_end = len(lines)
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("## Active Items"):
+                active_start = i
+            elif active_start != -1 and (stripped.startswith("## ") or stripped.startswith("# ")):
+                active_end = i
+                break
+
+        if active_start == -1:
+            return
+
+        section_lines = lines[active_start:active_end]
+
+        has_table = any(l.strip().startswith("|") for l in section_lines)
+        if has_table:
+            data_rows = []
+            pre_data_lines = []
+            post_data_lines = []
+            found_sep = False
+            for line in section_lines:
+                s = line.strip()
+                if not found_sep:
+                    pre_data_lines.append(line)
+                    if _is_table_separator(s):
+                        found_sep = True
+                else:
+                    if s.startswith("|") and not _is_table_separator(s) and not _is_table_header(s) and not post_data_lines:
+                        data_rows.append(line)
+                    else:
+                        post_data_lines.append(line)
+
+            if len(data_rows) > 1:
+                def _row_sort_key(row_line: str):
+                    d = self._extract_date_from_outline_row(row_line)
+                    return (1, d) if d else (0, "")
+
+                sorted_rows = sorted(data_rows, key=_row_sort_key, reverse=True)
+                if sorted_rows != data_rows:
+                    new_section = pre_data_lines + sorted_rows + post_data_lines
+                    new_lines = lines[:active_start] + new_section + lines[active_end:]
+                    self._write_lines(new_lines)
+        else:
+            bullet_blocks = []
+            pre_lines = []
+            post_lines = []
+            cur_block = []
+            in_bullets = False
+            for line in section_lines:
+                stripped = line.strip()
+                if (
+                    stripped.startswith("- [ ]")
+                    or stripped.startswith("- [x]")
+                    or stripped.startswith("- **")
+                    or (stripped.startswith("- [") and not stripped.startswith("- [ ]"))
+                ):
+                    if cur_block:
+                        bullet_blocks.append(cur_block)
+                    cur_block = [line]
+                    in_bullets = True
+                elif in_bullets and (line.startswith("  ") or line.startswith("\t")):
+                    cur_block.append(line)
+                elif in_bullets and not stripped:
+                    if cur_block:
+                        bullet_blocks.append(cur_block)
+                        cur_block = []
+                    post_lines.append(line)
+                else:
+                    if cur_block:
+                        bullet_blocks.append(cur_block)
+                        cur_block = []
+                    if not in_bullets:
+                        pre_lines.append(line)
+                    else:
+                        post_lines.append(line)
+            if cur_block:
+                bullet_blocks.append(cur_block)
+
+            if len(bullet_blocks) > 1:
+                def _bullet_sort_key(block):
+                    text = "".join(block)
+                    m = re.search(r'\b(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\b', text)
+                    d = m.group(1) if m else ""
+                    return (1, d) if d else (0, "")
+
+                sorted_blocks = sorted(bullet_blocks, key=_bullet_sort_key, reverse=True)
+                if sorted_blocks != bullet_blocks:
+                    flattened = [l for b in sorted_blocks for l in b]
+                    new_section = pre_lines + flattened + post_lines
+                    new_lines = lines[:active_start] + new_section + lines[active_end:]
+                    self._write_lines(new_lines)
 
     def _refresh_outline_dashboard(self) -> None:
         """Refresh child agent report lines in WORK-NEW.md."""
@@ -662,4 +789,6 @@ class OutlineMixin:
             self._write_lines([l + "\n" for l in new_text.splitlines()])
         elif changed:
             self._write_lines(lines)
+
+        self._sort_active_items_outline()
 
