@@ -11,7 +11,8 @@ Scripts (this repo) and work items live in separate sibling directories:
 ```
 MyNotebook/
 ├── Work-Loop/              ← scripts repo (this directory)
-│   ├── run-loop.py
+│   ├── run-loop.py         ← execution shim
+│   ├── workloop/           ← core package (core, remote, scripts, children, outline, harness)
 │   ├── test_run_loop.py
 │   ├── config.json         ← harness, work_dir, budget settings
 │   ├── prompts/            ← prompt templates directory
@@ -44,7 +45,8 @@ MyNotebook/
 
 | File | Purpose |
 |---|---|
-| `run-loop.py` | The loop script — `WorkLoop` class + `main()` + harness implementations |
+| `run-loop.py` | The executable shim that initializes and runs the `WorkLoop` |
+| `workloop/` | The core Python package. Contains `core.py` (WorkLoop class composed of Mixins), `harness.py` (Claude/OpenCode implementations), `remote.py`, `scripts.py`, `children.py`, and `outline.py`. |
 | `config.json` | Harness type, work_dir, model, budget, remote settings |
 | `../Work-Loop-Items/WORK.md` | The work item table (source of truth for status) |
 | `prompts/BASE-PROMPT.md` | Base execution rules (reasoning budget & fast-path) prepended to all prompts |

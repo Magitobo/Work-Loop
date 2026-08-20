@@ -45,7 +45,9 @@ The loop runs indefinitely. Press `Ctrl+C` to stop.
 
 ```
 Work-Loop/                    ← scripts repo
-├── run-loop.py               ← the loop script
+├── run-loop.py               ← executable shim
+├── workloop/                 ← core loop package
+├── test_run_loop.py          ← tests
 ├── config.json               ← harness + directory settings
 ├── prompts/                  ← prompt templates directory
 │   ├── BASE-PROMPT.md        ← base execution rules (reasoning budget & fast-path)

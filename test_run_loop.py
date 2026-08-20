@@ -334,8 +334,8 @@ class TestDispatchRemoteMode(unittest.TestCase):
                     rsynced.append(cmd[-2])
             return MagicMock(returncode=0, stdout="")
 
-        with patch.object(run_loop, '_run', side_effect=fake_run), \
-             patch.object(run_loop, 'subprocess') as mock_sub:
+        with patch('workloop.remote._run', side_effect=fake_run), \
+             patch('workloop.remote.subprocess') as mock_sub:
             mock_sub.run.return_value = MagicMock(returncode=0, stdout="", stderr=b"")
             wl.dispatch_remote("MY-ITEM", "2026-01-01_10-00-00", "user@host", 10.0, mode=mode)
         return rsynced
@@ -370,8 +370,8 @@ class TestDispatchRemoteMode(unittest.TestCase):
                 return script
 
             with patch.object(wl, 'build_launcher', side_effect=capturing_build), \
-                 patch.object(run_loop, '_run', return_value=MagicMock(returncode=0)), \
-                 patch.object(run_loop, 'subprocess') as mock_sub:
+                 patch('workloop.remote._run', return_value=MagicMock(returncode=0)), \
+                 patch('workloop.remote.subprocess') as mock_sub:
                 mock_sub.run.return_value = MagicMock(returncode=0, stdout="", stderr=b"")
                 wl.dispatch_remote("MY-ITEM", "2026-01-01_10-00-00", "user@host", 10.0, mode="implement")
 
@@ -393,8 +393,8 @@ class TestDispatchRemoteMode(unittest.TestCase):
                 return script
 
             with patch.object(wl, 'build_launcher', side_effect=capturing_build), \
-                 patch.object(run_loop, '_run', return_value=MagicMock(returncode=0)), \
-                 patch.object(run_loop, 'subprocess') as mock_sub:
+                 patch('workloop.remote._run', return_value=MagicMock(returncode=0)), \
+                 patch('workloop.remote.subprocess') as mock_sub:
                 mock_sub.run.return_value = MagicMock(returncode=0, stdout="", stderr=b"")
                 wl.dispatch_remote("MY-ITEM", "2026-01-01_10-00-00", "user@host", 10.0, mode="implement")
 
@@ -690,8 +690,8 @@ class TestRemoteTitleReadback(unittest.TestCase):
                 r.stdout = ""
             return r
 
-        with patch.object(run_loop, 'subprocess') as mock_sub, \
-             patch.object(run_loop, '_run') as mock_rrun:
+        with patch('workloop.remote.subprocess') as mock_sub, \
+             patch('workloop.remote._run') as mock_rrun:
             mock_sub.run.side_effect = fake_subprocess_run
             mock_rrun.return_value = MagicMock(returncode=0)
             wl.wait_for_remote("MY-ITEM", "2026-01-01_12-00-00", "remote-host", 10.0, poll_interval=0, timeout=5)
@@ -796,7 +796,7 @@ class TestTsStrFromLogCol(unittest.TestCase):
     def test_returns_none_when_no_log_and_remote_empty(self):
         from unittest.mock import patch, MagicMock
         wl = self._make_wl("MY-ITEM", "")
-        with patch.object(run_loop, 'subprocess') as mock_sub:
+        with patch('workloop.remote.subprocess') as mock_sub:
             r = MagicMock()
             r.stdout = ""
             mock_sub.run.return_value = r
@@ -805,7 +805,7 @@ class TestTsStrFromLogCol(unittest.TestCase):
     def test_falls_back_to_remote_glob(self):
         from unittest.mock import patch, MagicMock
         wl = self._make_wl("MY-ITEM", "")
-        with patch.object(run_loop, 'subprocess') as mock_sub:
+        with patch('workloop.remote.subprocess') as mock_sub:
             r = MagicMock()
             r.stdout = f"/home/user/Work-Loop/_logs/{self.TS}_MY-ITEM.log\n"
             mock_sub.run.return_value = r
@@ -814,7 +814,7 @@ class TestTsStrFromLogCol(unittest.TestCase):
     def test_remote_fallback_uses_connect_timeout(self):
         from unittest.mock import patch, MagicMock
         wl = self._make_wl("MY-ITEM", "")
-        with patch.object(run_loop, 'subprocess') as mock_sub:
+        with patch('workloop.remote.subprocess') as mock_sub:
             r = MagicMock()
             r.stdout = ""
             mock_sub.run.return_value = r
@@ -886,8 +886,8 @@ class TestSyncBackRemote(unittest.TestCase):
             r.stdout = remote_wmd if isinstance(cmd, list) and "WORK.md" in str(cmd[-1]) else ""
             return r
 
-        with patch.object(run_loop, 'subprocess') as mock_sub, \
-             patch.object(run_loop, '_run') as mock_rrun:
+        with patch('workloop.remote.subprocess') as mock_sub, \
+             patch('workloop.remote._run') as mock_rrun:
             mock_sub.run.side_effect = fake_run
             mock_rrun.return_value = MagicMock(returncode=0)
             wl._sync_back_remote("MY-ITEM", self.TS, "user@host", 10.0, exit_str)
@@ -1009,8 +1009,8 @@ class TestCheckStalledRemotes(unittest.TestCase):
             r.stdout = done_stdout if isinstance(cmd, list) and ".done" in str(cmd) else ""
             return r
 
-        with patch.object(run_loop, 'subprocess') as mock_sub, \
-             patch.object(run_loop, '_run') as mock_rrun:
+        with patch('workloop.remote.subprocess') as mock_sub, \
+             patch('workloop.remote._run') as mock_rrun:
             mock_sub.run.side_effect = fake_run
             mock_rrun.return_value = MagicMock(returncode=0)
             wl.check_stalled_remotes()
@@ -1037,8 +1037,8 @@ class TestCheckStalledRemotes(unittest.TestCase):
                 r.returncode = 0
                 r.stdout = "0" if ".done" in str(cmd) else ""
                 return r
-            with patch.object(run_loop, 'subprocess') as mock_sub, \
-                 patch.object(run_loop, '_run'):
+            with patch('workloop.remote.subprocess') as mock_sub, \
+                 patch('workloop.remote._run'):
                 mock_sub.run.side_effect = fake_run
                 wl.check_stalled_remotes()  # must not raise
             self.assertEqual(wl.get_col("MY-ITEM", COL_STATUS), "in-progress")
@@ -1057,7 +1057,7 @@ class TestCheckStalledRemotes(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             wl = _make_workloop(tmp, content)
             from unittest.mock import patch, MagicMock
-            with patch.object(run_loop, 'subprocess') as mock_sub:
+            with patch('workloop.remote.subprocess') as mock_sub:
                 wl.check_stalled_remotes()
                 mock_sub.run.assert_not_called()
             self.assertEqual(wl.get_col("MY-ITEM", COL_STATUS), "in-progress")
@@ -1337,8 +1337,8 @@ class TestDispatchRemoteResolvedMode(unittest.TestCase):
                 rsynced.append(cmd[-2])
             return MagicMock(returncode=0, stdout="")
 
-        with patch.object(run_loop, '_run', side_effect=fake_run), \
-             patch.object(run_loop, 'subprocess') as mock_sub:
+        with patch('workloop.remote._run', side_effect=fake_run), \
+             patch('workloop.remote.subprocess') as mock_sub:
             mock_sub.run.return_value = MagicMock(returncode=0, stdout="", stderr=b"")
             wl.dispatch_remote("MY-ITEM", "2026-01-01_10-00-00", "user@host", 10.0, mode="resolved")
         return rsynced
@@ -2141,7 +2141,7 @@ class TestAbortHandling(unittest.TestCase):
 
             with patch("subprocess.Popen", return_value=proc_mock), \
                  patch.object(wl, "get_col", side_effect=abort_get_col):
-                wl.harness.run("prompt text", 10.0, None, "MY-ITEM", log_file)
+                wl.harness.run("prompt text", 10.0, None, "MY-ITEM", log_file, abort_checker=lambda: wl.get_col("MY-ITEM", 4) == "abort")
 
             proc_mock.terminate.assert_called()
 
