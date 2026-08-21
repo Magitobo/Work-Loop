@@ -61,6 +61,14 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
         self.resolve_prompt_file = self._resolve_prompt("RESOLVE-PROMPT.md")
         self.child_research_prompt_file = self._resolve_prompt("UPDATE-RESEARCH-PROMPT.md")
 
+        # Auto-scaffold vault directories, templates, and agent rules
+        self.scaffold_actions = self.scaffold_vault()
+
+    def scaffold_vault(self) -> dict[str, list[str]]:
+        """Scaffold or update vault directories, templates, and agent rules."""
+        from .scaffold import scaffold_vault
+        return scaffold_vault(self.work_dir, self.script_dir)
+
     def _resolve_prompt(self, filename: str) -> Path:
         """Resolve a prompt file path, checking prompts/ subdir first, then script_dir."""
         prompts_path = self.script_dir / "prompts" / filename
@@ -455,9 +463,15 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
                     _sync_tree(src_path, dst_path)
                 else:
                     try:
+                        content = src_path.read_text(encoding='utf-8')
+                        if "{{" in content and "}}" in content:
+                            from .scaffold import render_template_placeholders
+                            content = render_template_placeholders(content, self.script_dir)
+                            dst_path.write_text(content, encoding='utf-8')
+                        else:
+                            shutil.copy2(src_path, dst_path)
+                    except (OSError, UnicodeDecodeError):
                         shutil.copy2(src_path, dst_path)
-                    except OSError:
-                        pass
 
         _sync_tree(src, dst)
 
@@ -669,6 +683,12 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
         signal.signal(signal.SIGINT, _handle_sigint)
 
         print(f"[{_ts()}] Work loop started. Default budget: ${self.max_budget} (override per item via Budget column). Press Ctrl+C to stop.")
+
+        if hasattr(self, 'scaffold_actions') and any(self.scaffold_actions.values()):
+            for path in self.scaffold_actions.get('created', []):
+                print(f"[{_ts()}] [Scaffold] Created: {path}")
+            for path in self.scaffold_actions.get('updated', []):
+                print(f"[{_ts()}] [Scaffold] Updated: {path}")
 
         self.resume_running_script_items()
         self.resume_running_children()

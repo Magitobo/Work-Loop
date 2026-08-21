@@ -1,8 +1,8 @@
-2# Work-Loop
+# Work-Loop
 
 ## What This Is
 
-An automated loop that runs an AI harness (Claude or OpenCode) on work items one at a time. Each item gets a fresh context. Items can run locally or be dispatched to a remote host over SSH. The loop also supports **script items** — automated command dispatch to one or more machines with cron scheduling, multi-machine polling, and fan-in aggregation.
+An automated loop that runs an AI harness (Claude or OpenCode) on work items one at a time. Each item gets a fresh context. Items can run locally or be dispatched to a remote host over SSH. The loop also supports **script items** — automated command dispatch to one or more machines with cron scheduling, multi-machine polling, and fan-in aggregation — **child agents** — parallel background research and task workers — and **vault auto-scaffolding** — automated folder initialization, template provisioning, and marker-fenced rule synchronization for any Obsidian vault.
 
 ## Directory Layout
 
@@ -12,7 +12,7 @@ Scripts (this repo) and work items live in separate sibling directories:
 MyNotebook/
 ├── Work-Loop/              ← scripts repo (this directory)
 │   ├── run-loop.py         ← execution shim
-│   ├── workloop/           ← core package (core, remote, scripts, children, outline, harness)
+│   ├── workloop/           ← core package (core, remote, scripts, children, outline, harness, scaffold)
 │   ├── test_run_loop.py
 │   ├── config.json         ← harness, work_dir, budget settings
 │   ├── prompts/            ← prompt templates directory
@@ -23,10 +23,14 @@ MyNotebook/
 │   │   ├── UPDATE-RESEARCH-PROMPT.md ← prompt for research items + child research
 │   │   ├── TASK-PROMPT.md  ← prompt for child task agents
 │   │   └── LOOP-PROMPT-v1.0.md ← legacy prompt
+│   ├── templates/          ← master vault templates & single sources of truth
+│   │   ├── vault-AGENTS.md ← marker-fenced vault rules (Obsidian CLI & Verified Research)
+│   │   ├── VERIFIED-RESEARCH-README.md ← single source of truth for 03 Verified Research
+│   │   └── WORK.md         ← master dashboard outline template
 │   └── .claude/ or .opencode/  ← agent config (harness-dependent)
-│       └── agents/         ← subagent definitions (critic.md, code-reviewer.md)
+│       └── agents/         ← subagent definitions (critic.md, code-reviewer.md, verified-research.md)
 └── Work-Loop-Items/        ← work items (part of the vault, not the scripts repo)
-    ├── WORK.md             ← main work item table
+    ├── WORK.md             ← main work item table / dashboard
     └── <item-id>/          ← one folder per work item
         ├── CONVERSATION.md ← thread between user and agent
         ├── WORK-CHILDREN.md← (optional) child agent registry table
@@ -45,10 +49,12 @@ MyNotebook/
 
 | File | Purpose |
 |---|---|
-| `run-loop.py` | The executable shim that initializes and runs the `WorkLoop` |
-| `workloop/` | The core Python package. Contains `core.py` (WorkLoop class composed of Mixins), `harness.py` (Claude/OpenCode implementations), `remote.py`, `scripts.py`, `children.py`, and `outline.py`. |
+| `run-loop.py` | The executable shim that initializes and runs the `WorkLoop` (supports `--init-vault <path>`) |
+| `workloop/` | The core Python package (`core.py`, `harness.py`, `remote.py`, `scripts.py`, `children.py`, `outline.py`, `scaffold.py`). |
+| `workloop/scaffold.py` | Vault auto-scaffolding, marker-fenced `AGENTS.md` sync, and dynamic template anchor rendering. |
 | `config.json` | Harness type, work_dir, model, budget, remote settings |
-| `../Work-Loop-Items/WORK.md` | The work item table (source of truth for status) |
+| `templates/` | Single sources of truth for vault rules (`vault-AGENTS.md`), research guidelines (`VERIFIED-RESEARCH-README.md`), and dashboard schema (`WORK.md`). |
+| `../Work-Loop-Items/WORK.md` | The work item table / dashboard (source of truth for status) |
 | `prompts/BASE-PROMPT.md` | Base execution rules (reasoning budget & fast-path) prepended to all prompts |
 | `prompts/LOOP-PROMPT.md` | Prompt injected for `analyze`/`ready`/`resolved` items |
 | `prompts/IMPL-PROMPT.md` | Prompt injected for `implement` items |
@@ -56,19 +62,33 @@ MyNotebook/
 | `prompts/UPDATE-RESEARCH-PROMPT.md` | Prompt for `research` items + child research (unified parent/child modes) |
 | `prompts/TASK-PROMPT.md` | Prompt for child task agents (scan + propose, never execute) |
 | `test_run_loop.py` | Unit tests (+ optional remote integration test) |
+| `tests/test_scaffold.py` | Unit tests for vault scaffolding, marker sync, and anchor resolution |
 | `tests/test_e2e.py` | E2E tests (run the real harness; opt-in via `ENABLE_E2E_TESTS`) |
 
 ## WORK.md Table Schema
 
-```
-| ID | Title / Initial Prompt | Location | Status | Last Updated | Budget | Log |
+The active dashboard uses the modern outline format with separate sections:
+
+```markdown
+# Work Loop
+
+## How to use
+...
+
+## Add New Item
+- [ ] Add instructions here...
+
+## Active Items
+| Task / Conversation | Status | Last Updated | Log | ID |
+
+## Done
+| Task / Conversation | Last Updated | Log | ID |
 ```
 
 - **ID** — folder name under `Work-Loop-Items/`; also the Jira key if it looks like one
-- **Title** — first link is the CONVERSATION link; the loop appends one `<br>`-separated link per child report (see README, Child Agents). The first link is used to seed CONVERSATION.md for `new` items.
-- **Location** — `local` or `user@hostname` for remote SSH dispatch; for script items: `linux:user@host` or `win:user@host`
-- **Status** — controls what the loop does (see below)
-- **Budget** — per-item override (e.g. `$5.0`); defaults to `MAX_BUDGET` (10.00)
+- **Task / Conversation** — first link is the CONVERSATION link; the loop appends one `<br>`-separated link per child report.
+- **Status** — controls what the loop does (`ready`, `analyze`, `implement`, `resolved`, `in-progress`, `needs-review`, `done`, `abort`).
+- **Budget** — per-item override (e.g. `$5.0`); defaults to `max_budget_usd` (10.00).
 
 The loop also maintains a `## Needs Attention` bullet section near the top of WORK.md
 (marker-fenced, omitted when empty) listing items/children needing review. It is bullets, not a
@@ -154,6 +174,29 @@ Parent conversation items can delegate background work to child agents defined i
 - **`type: task`** — scans local files, proposes actions (never executes), writes `runs/{run_id}/task.md`
 - Children set an attention marker (`<!-- attention: yes — {reason} -->` or `<!-- attention: no -->`) on line 1 of their target note to feed into the top-level `## Needs Attention` dashboard in `WORK.md`.
 
+## Vault Auto-Scaffolding & Portability
+
+The loop automatically provisions and maintains the vault environment it is attached to:
+
+1. **Startup Auto-Scaffolding (`workloop/scaffold.py`):**
+   - Automatically ensures `00 Inbox/`, `03 Verified Research/`, `50 Raw/`, and the work items directory exist.
+   - Copies missing starter files: `03 Verified Research/README.md` and `WORK.md`.
+2. **Marker-Fenced `AGENTS.md` Sync:**
+   - Synchronizes the managed block between `<!-- WORK-LOOP:START -->` and `<!-- WORK-LOOP:END -->` in the target vault's root `AGENTS.md`.
+   - Never overwrites custom user instructions outside the markers.
+3. **Explicit CLI Bootstrap:**
+   - Initialize any vault on-demand: `python3 run-loop.py --init-vault "/path/to/Vault"`.
+
+## Dynamic Subagent Templating
+
+To maintain a strict **Single Source of Truth**, subagent definitions in `.opencode/agents/` and `.claude/agents/` use dynamic anchor tags referencing master templates in `templates/`:
+
+* **`{{templates/VERIFIED-RESEARCH-README.md#1}}`** → Section 1: Core Architecture & Philosophy (Layered single-note model).
+* **`{{templates/VERIFIED-RESEARCH-README.md#2}}`** → Section 2: Standard Note Template (YAML frontmatter, claims, tables).
+* **`{{templates/VERIFIED-RESEARCH-README.md#3}}`** → Section 3: Verification Rules (Source hierarchy, quote mandate, wikilink provenance).
+
+**Resolution:** When `_sync_agent_dir` copies agent definitions to the active workspace (`02-Work-Loop-Items/.opencode/agents/`) or remote dispatch stages them, Work-Loop automatically resolves these anchors on-the-fly, giving the running LLM a 100% self-contained system prompt without filesystem overhead.
+
 ## Loop Execution
 
 ```bash
@@ -161,31 +204,26 @@ python3 run-loop.py      # runs forever, Ctrl+C to stop
 ```
 
 Each iteration:
-1. Moves `done` rows to the Done section
-2. Resumes any running script items (polling recovery)
-3. Recovers any stalled remote jobs (polls `.done` sentinel)
-4. Refreshes the WORK.md child dashboard (report links + `## Needs Attention`)
-5. Initializes `new` items
-6. Promotes `scheduled` script and research items whose cron fires now
-7. Picks up `ready`/`analyze`/`implement`/`resolved`/`research` items and processes them
-8. Processes child agents (research and task) for all parent items
+1. Performs startup auto-scaffolding and AGENTS.md sync (on first run)
+2. Moves `done` rows to the Done section
+3. Resumes any running script items (polling recovery)
+4. Recovers any stalled remote jobs (polls `.done` sentinel)
+5. Refreshes the WORK.md child dashboard (report links + `## Needs Attention`)
+6. Initializes `new` items
+7. Promotes `scheduled` script and research items whose cron fires now
+8. Picks up `ready`/`analyze`/`implement`/`resolved`/`research` items and processes them
+9. Processes child agents (research and task) for all parent items
 
-For **conversation items** (local): runs the configured harness (Claude or OpenCode) with the prompt + `ITEM_ID`/`WORK_LOOP_DIR`/`ITEM_DIR` appended.
+For **conversation items** (local):
+1. Syncs agent definitions to the target workspace via `_sync_agent_dir`, resolving any `{{templates/...#anchor}}` placeholders
+2. Runs configured harness (Claude or OpenCode) with prompt + variables.
 
 For **conversation items** (remote):
 1. Wipes `~/Work-Loop` on the remote
-2. Rsyncs item folder + prompt files + harness agent config (`.claude/` or `.opencode/`)
+2. Rsyncs item folder + prompt files + rendered harness agent config (`.claude/` or `.opencode/`)
 3. Uploads and launches a bash script via `nohup` (harness runs detached)
 4. Polls `{ITEM_ID}/.done` every 5 seconds for the exit code
-5. Rsyncs results back, reads the harness's concise title from remote `WORK.md`, wipes remote
-
-For **script items** (local or remote):
-1. Generates a run ID (YYYYMMDD-NNN) and appends a row to RUNS.md
-2. Dispatches the command to each target machine via SSH
-3. Polls each machine for completion (`.done` sentinel, heartbeat file, or file count changes)
-4. On timeout, marks the machine as timed out
-5. Runs optional aggregation script, then optional AI analysis prompt (fan-in)
-6. Updates RUNS.md row status and WORK.md status
+5. Rsyncs results back, reads concise title from remote `WORK.md`, wipes remote
 
 ## Harness Configuration
 

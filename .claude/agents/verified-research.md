@@ -12,7 +12,7 @@ permission:
 # - Anchor #2: Section 2 (Standard Note Markdown Template)
 # - Anchor #3: Section 3 (Verification Rules for Authors & Agents)
 # Work-Loop dynamically resolves and compiles these anchors when syncing to the
-# active workspace (.opencode/agents/) or dispatching to remote hosts over SSH.
+# active workspace (.claude/agents/) or dispatching to remote hosts over SSH.
 ---
 
 You are a verified research agent. Your task is to answer a research question through systematic web research with verification.

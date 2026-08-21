@@ -44,8 +44,11 @@ class RemoteMixin:
 
         agent_dir = self.script_dir / self.harness.agent_dir_name()
         if agent_dir.exists():
-            _run(["ssh", remote_host, f"mkdir -p {rwd}/{self.harness.agent_dir_name()}"])
-            _run(["rsync", "-avz", "--exclude=node_modules", "--exclude=.DS_Store", str(agent_dir) + "/", f"{remote_host}:{rwd}/{self.harness.agent_dir_name()}/"])
+            with tempfile.TemporaryDirectory() as tmp_agent_dir:
+                self._sync_agent_dir(tmp_agent_dir)
+                staged_dir = Path(tmp_agent_dir) / self.harness.agent_dir_name()
+                _run(["ssh", remote_host, f"mkdir -p {rwd}/{self.harness.agent_dir_name()}"])
+                _run(["rsync", "-avz", "--exclude=node_modules", "--exclude=.DS_Store", str(staged_dir) + "/", f"{remote_host}:{rwd}/{self.harness.agent_dir_name()}/"])
 
         title = self.get_item_title(item_id)
         stub = self.build_stub_work_md(item_id, title)

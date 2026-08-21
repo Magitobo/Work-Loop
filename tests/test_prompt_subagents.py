@@ -34,6 +34,8 @@ def _parse_frontmatter(text: str) -> dict[str, str] | None:
             continue
         # Determine indentation level
         stripped = line.lstrip()
+        if stripped.startswith("#"):
+            continue
         indent = len(line) - len(stripped)
         if indent == 0:
             current_prefix = ""

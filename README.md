@@ -56,6 +56,7 @@ Work-Loop/                    ← scripts repo
 │   ├── RESOLVE-PROMPT.md     ← prompt for resolved items (summary)
 │   ├── UPDATE-RESEARCH-PROMPT.md ← prompt for research items (parent + child modes)
 │   └── TASK-PROMPT.md        ← prompt for child task agents
+├── templates/                ← vault scaffolding templates (AGENTS.md, WORK.md, Verified Research README)
 ├── .opencode/                ← OpenCode agent config + sub-agent definitions
 │   └── agents/               ← sub-agent definitions (verified-research.md, etc.)
 └── <work_dir>/               ← work items (path configured in config.json)
@@ -411,7 +412,7 @@ In addition to prompt-driven agents, the loop supports **sub-agents** that the L
 | `code-reviewer` | Reviews code changes for correctness, edge cases, and test coverage |
 | `verified-research` | Performs verified web research with multi-angle search, claim extraction, and confidence ratings (invoked on user request) |
 
-Sub-agent definitions live in `.opencode/agents/`.
+Sub-agent definitions live in `.opencode/agents/` (and `.claude/agents/`). The `verified-research` sub-agent is dynamically compiled from `templates/VERIFIED-RESEARCH-README.md` at dispatch time, guaranteeing that human guidelines and AI behavior stay perfectly synchronized.
 
 ## Loop Execution Order
 
@@ -425,3 +426,15 @@ Each iteration of the loop:
 6. Promotes `scheduled` script and research items whose cron fires now
 7. Picks up `ready`/`analyze`/`implement`/`resolved`/`research` items and processes them
 8. Processes child agents (research and task) for all parent items (including `done` parents with active scheduled children); re-scans for newly created children after processing each parent
+
+## Vault Auto-Scaffolding & Portability
+
+The Work-Loop automatically bootstraps and synchronizes standard folder structures and agent rules for any vault it points to:
+
+- **Startup Auto-Scaffolding:** When `run-loop.py` starts, it ensures `00 Inbox/`, `03 Verified Research/`, `50 Raw/`, `WORK.md`, and `03 Verified Research/README.md` exist in the target vault.
+- **Marker-Fenced `AGENTS.md` Sync:** Work-Loop manages a dedicated block (`<!-- WORK-LOOP:START --> ... <!-- WORK-LOOP:END -->`) inside the vault root `AGENTS.md`. It safely inserts or updates CLI efficiency and verified-research rules without overwriting custom user instructions.
+- **Explicit Bootstrap Command:** To initialize a new vault on-demand:
+  ```bash
+  python3 run-loop.py --init-vault "/path/to/NewVault"
+  ```
+
