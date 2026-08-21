@@ -144,7 +144,7 @@ class TestResearchAppendRun(unittest.TestCase):
         self.assertIn("20260717-001", text)
         self.assertIn("Added 3 new papers", text)
         self.assertIn("done", text)
-        self.assertIn("runs/20260717-001/", text)
+        self.assertIn("runs/20260717-001/research.md", text)
 
     def test_append_research_run_creates_header(self):
         tmp = tempfile.mkdtemp()

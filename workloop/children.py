@@ -229,7 +229,7 @@ class ChildrenMixin:
         work_children_path.write_text(''.join(new_lines))
 
     def process_child(self, parent_id: str, child_name: str) -> None:
-        """Process a child agent (research or task). Does NOT touch top-level WORK.md."""
+        """Process a child agent (research or task). Updates parent's Last Updated in top-level WORK.md."""
         child_dir = self.work_dir / parent_id / "children" / child_name
         runs_path = child_dir / "RUNS.md"
         config = self._parse_child_runs_md(runs_path)
@@ -304,6 +304,7 @@ class ChildrenMixin:
             self.work_dir / parent_id / "WORK-CHILDREN.md", child_name
         )
         self._update_child_log(parent_id, child_name, log_link)
+        self.update_col(parent_id, COL_LAST_UPDATED, today)
 
         if current_status == 'abort':
             self._update_child_status(parent_id, child_name, 'abort')
@@ -331,7 +332,16 @@ class ChildrenMixin:
                 ]
                 if non_empty:
                     summary = non_empty[0]
-            self._append_research_run(child_name, run_id, summary, status='done', runs_path=runs_path)
+            child_log_link = f"[Log](../../_logs/{ts}_{parent_id}_{child_name}.log)"
+            self._append_research_run(
+                child_name,
+                run_id,
+                summary,
+                status='done',
+                runs_path=runs_path,
+                summary_file=summary_file,
+                log_link=child_log_link,
+            )
 
             if config.get('schedule'):
                 self._update_child_status(parent_id, child_name, 'scheduled')

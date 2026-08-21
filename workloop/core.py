@@ -621,7 +621,15 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
                         summary = non_empty[0] if non_empty else "Research complete"
                     else:
                         summary = "Research complete"
-                    self._append_research_run(item_id, latest_run, summary, status='done')
+                    research_log_link = f"[Log](_logs/{ts}_{item_id}.log)"
+                    self._append_research_run(
+                        item_id,
+                        latest_run,
+                        summary,
+                        status='done',
+                        summary_file='research.md',
+                        log_link=research_log_link,
+                    )
                 if config.get('schedule'):
                     self.update_col(item_id, COL_STATUS, "scheduled")
                     self._inject_or_update_action_callout(item_id, "scheduled", budget, log_link=note_log_link)

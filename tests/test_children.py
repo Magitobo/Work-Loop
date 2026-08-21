@@ -3,6 +3,7 @@ import shutil
 import tempfile
 import unittest
 import unittest.mock
+from datetime import datetime
 from pathlib import Path
 import json
 import re
@@ -337,15 +338,16 @@ class TestProcessChild(unittest.TestCase):
             status = wl._get_child_status(wc_path, "areas")
             self.assertEqual(status, "needs-review")
 
-    def test_work_md_not_modified(self):
-        """process_child must NOT touch top-level WORK.md."""
+    def test_work_md_last_updated_when_child_runs(self):
+        """process_child updates parent's Last Updated in top-level WORK.md."""
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl_with_child(tmp)
-            work_md_before = (Path(tmp) / "WORK.md").read_text()
+            today = datetime.now().strftime('%Y-%m-%d')
+            self.assertEqual(wl.get_col("PARENT-001", COL_LAST_UPDATED), "")
             with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=0):
                 wl.process_child("PARENT-001", "areas")
-            work_md_after = (Path(tmp) / "WORK.md").read_text()
-            self.assertEqual(work_md_before, work_md_after)
+            self.assertEqual(wl.get_col("PARENT-001", COL_LAST_UPDATED), today)
+            self.assertEqual(wl.get_col("PARENT-001", COL_STATUS), "ready")
 
     def test_abort_during_run(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -479,8 +481,31 @@ class TestAppendResearchRunWithPath(unittest.TestCase):
             wl._append_research_run("areas", "20260105-002", "", status="done", runs_path=runs_path)
             text = runs_path.read_text()
             self.assertIn("20260105-002", text)
-            self.assertIn("[20260105-002 run](runs/20260105-002/)", text)
+            self.assertIn("[20260105-002 run](runs/20260105-002/research.md)", text)
             self.assertIn("done", text)
+
+    def test_appends_task_child_links(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = _make_parent_with_children(tmp, "PARENT-001", [
+                {"name": "inbox", "status": "ready", "runs_md": _CHILD_TASK_RUNS_MD}
+            ])
+            runs_path = Path(tmp) / "PARENT-001" / "children" / "inbox" / "RUNS.md"
+            run_dir = runs_path.parent / "runs" / "20260820-001"
+            run_dir.mkdir(parents=True)
+            (run_dir / "task.md").write_text("## Proposed 3 moves\n")
+            log_link = "[Log](../../_logs/2026-08-20_01-00-00_PARENT-001_inbox.log)"
+            wl._append_research_run(
+                "inbox",
+                "20260820-001",
+                "Inbox cleanup",
+                status="done",
+                runs_path=runs_path,
+                summary_file="task.md",
+                log_link=log_link,
+            )
+            text = runs_path.read_text()
+            self.assertIn("[Inbox cleanup](runs/20260820-001/task.md)", text)
+            self.assertIn(log_link, text)
 
 
 class TestChildCronPromotion(unittest.TestCase):

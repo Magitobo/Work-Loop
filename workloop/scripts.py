@@ -377,14 +377,33 @@ class ScriptsMixin:
         run_dir.mkdir(parents=True, exist_ok=True)
         return run_dir
 
-    def _append_research_run(self, item_id: str, run_id: str, summary: str, status: str = 'done', runs_path: Path | None = None) -> None:
+    def _append_research_run(
+        self,
+        item_id: str,
+        run_id: str,
+        summary: str,
+        status: str = 'done',
+        runs_path: Path | None = None,
+        summary_file: str = 'research.md',
+        log_link: str | None = None,
+    ) -> None:
         """Insert a new row to RUNS.md run history table for research/task items with recent on top."""
         runs_file = runs_path if runs_path is not None else self.work_dir / item_id / "RUNS.md"
         today = datetime.now().strftime('%Y-%m-%d %H:%M')
-        log_link = f"[Log](runs/{run_id}/)"
+        runs_dir = runs_file.parent / "runs" / run_id
+        if (runs_dir / summary_file).exists():
+            summary_target = f"runs/{run_id}/{summary_file}"
+        elif (runs_dir / "task.md").exists():
+            summary_target = f"runs/{run_id}/task.md"
+        elif (runs_dir / "research.md").exists():
+            summary_target = f"runs/{run_id}/research.md"
+        else:
+            summary_target = f"runs/{run_id}/{summary_file}"
+
         summary_text = summary.strip() or f"{run_id} run"
-        summary_link = f"[{summary_text}](runs/{run_id}/)"
-        row = f"| {run_id} | {summary_link} | {status} | {today} | {log_link} |\n"
+        summary_link = f"[{summary_text}]({summary_target})"
+        actual_log_link = log_link if log_link is not None else f"[Log]({summary_target})"
+        row = f"| {run_id} | {summary_link} | {status} | {today} | {actual_log_link} |\n"
         text = runs_file.read_text() if runs_file.exists() else ""
         lines = text.splitlines(keepends=True)
         table_sep_idx = -1
