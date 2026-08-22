@@ -64,6 +64,10 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
         # Auto-scaffold vault directories, templates, and agent rules
         self.scaffold_actions = self.scaffold_vault()
 
+        # Sync harness agent definitions into the workspace so edits to
+        # .opencode/agents or .claude/agents are picked up on every startup.
+        self._sync_agent_dir(str(self.work_dir))
+
     def scaffold_vault(self) -> dict[str, list[str]]:
         """Scaffold or update vault directories, templates, and agent rules."""
         from .scaffold import scaffold_vault

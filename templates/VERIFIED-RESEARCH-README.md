@@ -1,5 +1,8 @@
 # Verified Research Guidelines & Standards
 
+> [!warning] Auto-generated — do not edit
+> This file is generated and maintained by Work-Loop from `templates/VERIFIED-RESEARCH-README.md`. Local edits will be overwritten on the next loop run. To change this file, edit the template in the Work-Loop repo.
+
 This directory contains curated, high-confidence, verified research notes. It serves as the authoritative knowledge layer in the vault, bridging raw inputs and actionable decisions.
 
 Any contributor—whether **human** or **AI agent** (such as the `verified-research` subagent)—must follow the rules and format described below when creating or updating notes here.

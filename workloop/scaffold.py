@@ -185,12 +185,14 @@ def scaffold_vault(
         shutil.copy2(work_template, work_md)
         actions['created'].append(str(work_md))
 
-    # 3. 03 Verified Research/README.md
+    # 3. 03 Verified Research/README.md (template is single source of truth)
     vr_readme = vault_dir / "03 Verified Research" / "README.md"
     vr_template = templates_dir / "VERIFIED-RESEARCH-README.md"
-    if not vr_readme.exists() and vr_template.exists():
-        shutil.copy2(vr_template, vr_readme)
-        actions['created'].append(str(vr_readme))
+    if vr_template.exists():
+        existed = vr_readme.exists()
+        if not existed or vr_readme.read_text(encoding='utf-8') != vr_template.read_text(encoding='utf-8'):
+            shutil.copy2(vr_template, vr_readme)
+            actions['updated' if existed else 'created'].append(str(vr_readme))
 
     # 4. AGENTS.md in vault_dir (Marker-fenced)
     if sync_agents:

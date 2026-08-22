@@ -116,6 +116,24 @@ def test_scaffold_vault_full(tmp_path: Path):
     assert len(res2['updated']) == 0
 
 
+def test_scaffold_vault_readme_syncs_template_changes(tmp_path: Path):
+    script_dir = Path(__file__).parent.parent
+    vault_dir = tmp_path / "MyVault"
+    work_dir = vault_dir / "02-Work-Loop-Items"
+
+    scaffold_vault(work_dir=work_dir, script_dir=script_dir, vault_dir=vault_dir)
+    readme = vault_dir / "03 Verified Research" / "README.md"
+    template = script_dir / "templates" / "VERIFIED-RESEARCH-README.md"
+    assert readme.read_text() == template.read_text()
+
+    # Simulate drift in the vault copy
+    readme.write_text(readme.read_text() + "\n<!-- local drift -->\n")
+
+    res = scaffold_vault(work_dir=work_dir, script_dir=script_dir, vault_dir=vault_dir)
+    assert str(readme) in res['updated']
+    assert readme.read_text() == template.read_text()
+
+
 def test_workloop_init_triggers_scaffold(tmp_path: Path):
     script_dir = Path(__file__).parent.parent
     vault_dir = tmp_path / "AutoVault"

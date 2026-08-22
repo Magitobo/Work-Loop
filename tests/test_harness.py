@@ -578,12 +578,9 @@ class TestAgentSync(unittest.TestCase):
     def test_agent_dir_copied_to_workspace(self):
         with tempfile.TemporaryDirectory() as tmp_str:
             tmp = Path(tmp_str)
-            wl = WorkLoop({"work_dir": tmp, "harness": {"type": "opencode"}}, script_dir=_HERE)
+            # Agent dir is synced into the workspace at construction
+            WorkLoop({"work_dir": tmp, "harness": {"type": "opencode"}}, script_dir=_HERE)
             work_opencode = tmp / ".opencode"
-            self.assertFalse(work_opencode.exists())
-
-            wl._sync_agent_dir(str(tmp))
-
             self.assertTrue(work_opencode.exists())
             self.assertTrue((work_opencode / "agents" / "critic.md").exists())
             self.assertTrue((work_opencode / "agents" / "code-reviewer.md").exists())
@@ -600,12 +597,12 @@ class TestAgentSync(unittest.TestCase):
     def test_sync_overwrites_stale_agents(self):
         with tempfile.TemporaryDirectory() as tmp_str:
             tmp = Path(tmp_str)
-            wl = WorkLoop({"work_dir": tmp, "harness": {"type": "opencode"}}, script_dir=_HERE)
+            # Pre-seed a stale agent BEFORE construction so the startup sync cleans it up
             stale_dir = tmp / ".opencode" / "agents"
             stale_dir.mkdir(parents=True)
             (stale_dir / "old-agent.md").write_text("stale")
 
-            wl._sync_agent_dir(str(tmp))
+            WorkLoop({"work_dir": tmp, "harness": {"type": "opencode"}}, script_dir=_HERE)
 
             self.assertTrue((tmp / ".opencode" / "agents" / "critic.md").exists())
             self.assertFalse((tmp / ".opencode" / "agents" / "old-agent.md").exists())
