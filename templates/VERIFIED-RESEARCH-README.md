@@ -37,37 +37,30 @@ tags:
 [[02-Work-Loop-Items/{Optional-Item-ID}/CONVERSATION]]
 
 ## Summary
-> [!summary] Confidence: {high/medium/low} | {N} claims | {N} primary sources
+> [!summary] Confidence: {high/medium/low} · {N} sources
 > One-paragraph overall conclusion answering the core research question.
 
 ## {Sub-Topic 1}
 
-### Claim: {Specific factual assertion}
-- **Confidence**: high | medium | low
-- **Source**: [[50 Raw/...|Source Name]] or [External Source](https://...) (primary | secondary | anecdotal, fetched YYYY-MM-DD)
-- **Quote**: "{Verbatim supporting excerpt from source}"
-- **Status**: verified | pending review
+Readable prose synthesizing findings for this sub-topic. Every factual
+claim must cite a footnote.[^1] When sources disagree, present both
+perspectives inline with their respective citations — Source A reports
+X,[^2] while Source B found Y.[^3] Assess which view the evidence
+favors based on source authority and recency.
 
 ## {Sub-Topic 2}
 
-### Claim: {Specific factual assertion}
-- **Confidence**: high | medium | low
-- **Source**: [Source Name](https://...) (primary, fetched YYYY-MM-DD)
-- **Quote**: "{Verbatim quote}"
-- **Status**: verified
+Continue with flowing prose for each sub-topic...
 
-## Contradictions
-| Claim | Source A (type, confidence) | Source B (type, confidence) | Resolution |
-|-------|----------------------------|----------------------------|------------|
-| {Contradictory topic/assertion} | {Source name/link} ({type}, {conf}) | {Source name/link} ({type}, {conf}) | {Analysis and reasoned resolution} |
+## Open Questions
 
-## Remaining Uncertainties
-- {Unresolved points, missing details, or edge cases with recommended next steps}
+- {Unresolved points, missing details, or edge cases with suggested next steps}
 
-## Sources
-| URL / Note Link | Type | Status |
-|-----------------|------|--------|
-| https://... or [[50 Raw/...]] | primary / secondary / anecdotal | Fetched / Verified / Inaccessible |
+## References
+
+[^1]: [Source Name](https://...) or [[50 Raw/...|Source Name]] (primary/secondary/anecdotal, fetched YYYY-MM-DD) — "{Verbatim quote}" · **high/medium/low confidence**
+[^2]: [Source Name](https://...) (primary, fetched YYYY-MM-DD) — "{Verbatim quote}" · **high confidence**
+[^3]: [[50 Raw/...|Source Name]] (anecdotal, fetched YYYY-MM-DD) — "{Verbatim quote}" · **low confidence**
 ```
 
 ---
@@ -81,11 +74,11 @@ tags:
    - **Secondary Sources** (Reputable news outlets, established industry blogs): Moderate priority; require corroboration where possible.
    - **Anecdotal Sources** (Forums, Reddit, community discussions): Treat as leads or low-confidence indicators, never as authoritative proof.
 3. **Surface Contradictions Honestly:**
-   - If sources conflict, do not silently discard one. List both in the `## Contradictions` table and articulate the resolution based on source authority and recency.
+   - If sources conflict, do not silently discard one. Discuss both perspectives inline where the contradiction naturally arises, citing each source via footnotes, and articulate the resolution based on source authority and recency.
 4. **Auditability & Provenance:**
    - When citing a source existing in the vault, use Obsidian wikilinks: `[[50 Raw/Topic/Note-Name|Note Title]]`.
    - When citing live web sources, provide the full URL, source type, and fetch date.
 5. **Freshness & Review Dates:**
    - For volatile or time-sensitive topics (e.g. immigration rules, banking regulations, API pricing), set `review-due` (typically 30–90 days out) so outdated facts can be surfaced via Dataview queries.
-6. **Conciseness:**
-   - Use structured bullet points, clear tables, and crisp summaries rather than unstructured essay prose.
+6. **Readable Prose with Footnotes:**
+   - Write flowing, Wikipedia-style prose organized by sub-topic. Cite sources using Obsidian footnotes (`[^N]`), with each footnote carrying the verbatim quote, source type, confidence, and fetch date in the `## References` section.

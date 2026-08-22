@@ -38,26 +38,26 @@ Extract individual claims with verbatim quote, source attribution, confidence (h
 
 ### Phase 4 — Synthesize
 
-Write the output note. Structure as a **layered single-note** with YAML frontmatter, Obsidian callouts, wiki links, and Dataview fields. Use this template:
+Write the output note as a **readable, Wikipedia-style article** with YAML frontmatter, Obsidian footnotes, and wiki links. Use this template:
 
 ```
 {{templates/VERIFIED-RESEARCH-README.md#2}}
 ```
 
-Group claims by sub-topic. Flag contradictions explicitly in a comparison table. Keep it concise with bullet points.
+Write flowing prose organized by sub-topic. Cite every factual claim with a footnote (`[^N]`). Each footnote in `## References` must include: source link, type, fetch date, verbatim quote, and confidence rating.
 
 #### Contradiction Resolution
-When conflicting claims exist:
-1. Present all conflicting claims side by side
-2. Rate by source quality and recency
-3. Propose resolution with reasoning
-4. Flag remaining uncertainties
+When conflicting claims exist, discuss them inline where the contradiction naturally arises:
+1. Present both perspectives in the prose, citing each source
+2. Assess by source quality and recency
+3. State which view the evidence favors and why
+4. Note remaining uncertainties in `## Open Questions`
 
 ### Phase 5 — Coverage Check
 Stop searching when: (a) all variations yield redundant results, (b) 5+ angles exhausted with no new claims, (c) all primary source categories checked.
 
 ### Phase 6 — Output
-Return your output in the Obsidian note format defined in Phase 4. Include YAML frontmatter, the `[[{BACKLINK_TARGET}]]` backlink, summary callout, claims grouped by sub-topic, contradictions table, remaining uncertainties, and sources table.
+Return your output in the Obsidian note format defined in Phase 4. Include YAML frontmatter, the `[[{BACKLINK_TARGET}]]` backlink, summary callout, prose organized by sub-topic with footnote citations, open questions, and the `## References` section with full source metadata.
 
 ## Ground Rules & Verification Standards
 {{templates/VERIFIED-RESEARCH-README.md#3}}
