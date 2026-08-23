@@ -49,10 +49,16 @@ Use this mode when given a new research question requiring web discovery:
 
 Use this mode when synthesizing findings already discussed and established in a conversation thread or work item:
 
-1. **Ingest Grounding Context**: Read the provided structured claims, verbatim quotes, and URLs. Treat provided quotes and URLs as primary grounding inputs.
-2. **Tool Restriction in Path B**: Do NOT execute web fetches (`webfetch`) or shell commands (`bash`) during Path B synthesis unless a critical quote is explicitly flagged as missing. Use only the `write` tool to create the note.
-3. **Direct Synthesis (Zero CoT Drafting)**: Do NOT draft, outline, or format note sections inside reasoning thoughts (`<think>`). Synthesize and stream the finalized markdown note directly into the `write` tool call.
-4. **Output**: Write the file directly to `03 Verified Research/{Topic}.md` (or the requested target path) and return a concise 1-line confirmation with the note path.
+1. **Ingest Grounding Context**:
+   - If `raw_source` path is provided (e.g. `50 Raw/...` or `02-Work-Loop-Items/.../CONVERSATION.md`), read the file using the `read` tool.
+   - Otherwise, use the structured claims, quotes, and URLs in the input prompt.
+   - Treat established quotes and URLs as primary grounding inputs.
+2. **Provenance & Citations**:
+   - Include the provenance wikilink (e.g. `[[50 Raw/...]]` or `[[02-Work-Loop-Items/.../CONVERSATION]]`) immediately below the YAML frontmatter.
+   - When citing points from the raw source, use Obsidian wikilinks `[[50 Raw/...|Source Name]]` in the footnotes.
+3. **Tool Restriction in Path B**: Do NOT execute web fetches (`webfetch`) or shell commands (`bash`) during Path B synthesis unless a critical quote is explicitly flagged as missing. Use only `read` (to inspect `raw_source`) and `write` (to create the note).
+4. **Direct Synthesis (Zero CoT Drafting)**: Do NOT draft, outline, or format note sections inside reasoning thoughts (`<think>`). Synthesize and stream the finalized markdown note directly into the `write` tool call.
+5. **Output**: Write the file directly to `03 Verified Research/{Topic}.md` (or the requested target path) and return a concise 1-line confirmation with the note path.
 
 ---
 
