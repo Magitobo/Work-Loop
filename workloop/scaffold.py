@@ -207,13 +207,13 @@ def scaffold_vault(
                 else:
                     actions['created'].append(str(agents_md))
 
-    # 5. Skills in vault (.agents/skills for Gemini, .opencode/skills, .claude/skills)
+    # 5. Skills in vault root (.agents/skills for Gemini, .opencode/skills, .claude/skills)
     skills_template = templates_dir / "skills"
     if skills_template.exists():
         target_skills_dirs = [
             vault_dir / ".agents" / "skills",
-            work_dir / ".opencode" / "skills",
-            work_dir / ".claude" / "skills",
+            vault_dir / ".opencode" / "skills",
+            vault_dir / ".claude" / "skills",
         ]
         for base_skills_dir in target_skills_dirs:
             for skill_dir in skills_template.iterdir():
@@ -227,6 +227,7 @@ def scaffold_vault(
                         if not existed or target_skill_file.read_text(encoding='utf-8') != skill_file.read_text(encoding='utf-8'):
                             shutil.copy2(skill_file, target_skill_file)
                             actions['updated' if existed else 'created'].append(str(target_skill_file))
+
 
     return actions
 
