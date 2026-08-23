@@ -107,6 +107,8 @@ def test_scaffold_vault_full(tmp_path: Path):
     assert (vault_dir / "50 Raw").is_dir()
     assert (vault_dir / "AGENTS.md").is_file()
     assert (vault_dir / "03 Verified Research" / "README.md").is_file()
+    assert (vault_dir / ".agents" / "skills" / "verified-research" / "SKILL.md").is_file()
+    assert (vault_dir / ".agents" / "skills" / "synthesize-research" / "SKILL.md").is_file()
     assert (work_dir / "WORK.md").is_file()
     assert len(res['created']) >= 5
 

@@ -207,4 +207,21 @@ def scaffold_vault(
                 else:
                     actions['created'].append(str(agents_md))
 
+    # 5. Skills in vault_dir / ".agents" / "skills"
+    skills_template = templates_dir / "skills"
+    if skills_template.exists():
+        vault_skills_dir = vault_dir / ".agents" / "skills"
+        for skill_dir in skills_template.iterdir():
+            if skill_dir.is_dir():
+                target_skill_dir = vault_skills_dir / skill_dir.name
+                skill_file = skill_dir / "SKILL.md"
+                target_skill_file = target_skill_dir / "SKILL.md"
+                if skill_file.exists():
+                    target_skill_dir.mkdir(parents=True, exist_ok=True)
+                    existed = target_skill_file.exists()
+                    if not existed or target_skill_file.read_text(encoding='utf-8') != skill_file.read_text(encoding='utf-8'):
+                        shutil.copy2(skill_file, target_skill_file)
+                        actions['updated' if existed else 'created'].append(str(target_skill_file))
+
     return actions
+
