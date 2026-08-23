@@ -84,5 +84,8 @@ Continue with flowing prose for each sub-topic...
    - When citing live web sources, provide the full URL, source type, and fetch date.
 5. **Freshness & Review Dates:**
    - For volatile or time-sensitive topics (e.g. immigration rules, banking regulations, API pricing), set `review-due` (typically 30–90 days out) so outdated facts can be surfaced via Dataview queries.
-6. **Readable Prose with Footnotes:**
-   - Write flowing, Wikipedia-style prose organized by sub-topic. Cite sources using Obsidian footnotes (`[^N]`), with each footnote carrying the verbatim quote, source type, confidence, and fetch date in the `## References` section.
+6. **Readable Prose with Footnotes & Sequential Indexing:**
+   - Write flowing, Wikipedia-style prose organized by sub-topic.
+   - Cite sources using footnotes numbered sequentially (`[^1]`, `[^2]`, ...) in the exact order they appear in the body prose.
+   - Keep verbatim quotes in footnotes concise (1–2 key sentences backing the claim, ≤40 words) rather than reproducing full paragraphs.
+   - In the `## References` section, list matching `[^N]` definitions in exact numerical order, each carrying the verbatim quote, source type, confidence, and fetch date.

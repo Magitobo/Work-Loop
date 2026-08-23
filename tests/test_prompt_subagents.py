@@ -371,10 +371,13 @@ class TestVerifiedResearchAgentDefinition(unittest.TestCase):
         self.assertEqual(fm.get("mode"), "subagent")
 
     def test_verified_research_permissions(self):
-        p = _HERE / ".opencode" / "agents" / "verified-research.md"
-        fm = _parse_frontmatter(p.read_text())
-        self.assertEqual(fm.get("permission.edit"), "deny")
-        self.assertEqual(fm.get("permission.bash"), "deny")
+        for agent_dir in [".opencode", ".claude"]:
+            p = _HERE / agent_dir / "agents" / "verified-research.md"
+            fm = _parse_frontmatter(p.read_text())
+            self.assertEqual(fm.get("permission.edit"), "deny")
+            self.assertEqual(fm.get("permission.bash"), "deny")
+            self.assertEqual(fm.get("permission.write"), "allow")
+            self.assertEqual(fm.get("permission.read"), "allow")
 
     def test_verified_research_has_dynamic_anchors(self):
         p = _HERE / ".opencode" / "agents" / "verified-research.md"
@@ -398,8 +401,8 @@ class TestVerifiedResearchAgentDefinition(unittest.TestCase):
         prompt = (_PROMPTS_DIR / "LOOP-PROMPT.md").read_text()
         self.assertIn('subagent_type="verified-research"', prompt)
 
-    def test_base_prompt_spawns_verified_research(self):
-        prompt = (_PROMPTS_DIR / "BASE-PROMPT.md").read_text()
+    def test_vault_agents_template_spawns_verified_research(self):
+        prompt = (_HERE / "templates" / "vault-AGENTS.md").read_text()
         self.assertIn('subagent_type="verified-research"', prompt)
 
     def test_verified_research_context_protection(self):

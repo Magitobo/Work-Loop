@@ -56,7 +56,7 @@ MyNotebook/
 | `config.json` | Harness type, work_dir, model, budget, remote settings |
 | `templates/` | Single sources of truth for vault rules (`vault-AGENTS.md`), research guidelines (`VERIFIED-RESEARCH-README.md`), and dashboard schema (`WORK.md`). |
 | `../Work-Loop-Items/WORK.md` | The work item table / dashboard (source of truth for status) |
-| `prompts/BASE-PROMPT.md` | Base execution rules (reasoning budget, fast-path, and interactive research delegation) prepended to all prompts |
+| `prompts/BASE-PROMPT.md` | Base execution rules (reasoning budget, fast-path, and task viability) prepended to all prompts |
 | `prompts/LOOP-PROMPT.md` | Prompt injected for `analyze`/`ready`/`resolved` items (includes Step 7 Verified Research) |
 | `prompts/IMPL-PROMPT.md` | Prompt injected for `implement` items |
 | `prompts/RESOLVE-PROMPT.md` | Prompt injected for `resolved` items (summarize problem/resolution) |
