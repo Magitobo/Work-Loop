@@ -67,6 +67,10 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
         # Sync harness agent definitions into the workspace so edits to
         # .opencode/agents or .claude/agents are picked up on every startup.
         self._sync_agent_dir(str(self.work_dir))
+        vault_dir = self.work_dir.parent if (self.work_dir.parent / ".obsidian").exists() else None
+        if vault_dir:
+            self._sync_agent_dir(str(vault_dir))
+
 
     def scaffold_vault(self) -> dict[str, list[str]]:
         """Scaffold or update vault directories, templates, and agent rules."""
