@@ -58,7 +58,7 @@ Work-Loop/                    ← scripts repo
 │   └── TASK-PROMPT.md        ← prompt for child task agents
 ├── templates/                ← vault scaffolding templates (AGENTS.md, WORK.md, Verified Research README)
 ├── .opencode/                ← OpenCode agent config + sub-agent definitions
-│   └── agents/               ← sub-agent definitions (verified-research.md, etc.)
+│   └── agents/               ← sub-agent definitions (verified-research.md, research-worker.md, etc.)
 └── <work_dir>/               ← work items (path configured in config.json)
     ├── WORK.md               ← main work item table
     └── <item-id>/            ← one folder per item
@@ -66,7 +66,8 @@ Work-Loop/                    ← scripts repo
         ├── _logs/            ← harness logs
         ├── background.md     ← (optional) internal context
         ├── WORK-CHILDREN.md  ← (optional) child agent registry
-        ├── context/          ← (optional) shared context notes (child reports live here)
+        ├── context/          ← (optional) shared context notes (child reports & research staging live here)
+        │   └── research/     ← (optional) in-flight raw research extracts (raw-*.md)
         └── children/         ← (optional) child agent directories
             └── {name}/      ← one folder per child agent
                 ├── RUNS.md ← child config + run history
@@ -404,15 +405,31 @@ Each prompt receives `ITEM_ID`, `WORK_LOOP_DIR`, and `ITEM_DIR` as variables. Re
 
 ### Sub-Agents
 
-In addition to prompt-driven agents, the loop supports **sub-agents** that the LOOP-PROMPT agent can spawn during its work:
+In addition to prompt-driven agents, the loop supports **sub-agents** that orchestrate focused sub-tasks:
 
-| Sub-Agent | Purpose |
-|---|---|
-| `critic` | Reviews draft findings for unverified claims, inaccessible resources, and gaps |
-| `code-reviewer` | Reviews code changes for correctness, edge cases, and test coverage |
-| `verified-research` | Performs verified web research with multi-angle search, claim extraction, and confidence ratings (invoked on user request) |
+| Sub-Agent | Role | Purpose |
+|---|---|---|
+| `critic` | Reviewer | Reviews draft findings for unverified claims, inaccessible resources, and gaps |
+| `code-reviewer` | Reviewer | Reviews code changes for correctness, edge cases, and test coverage |
+| `verified-research` | Orchestrator | Coordinates multi-topic verified web research (Path A) or retrospective discussion synthesis (Path B) |
+| `research-worker` | Leaf Worker | Performs targeted web search for a single subtopic, writes raw extracts to a staging file, and returns a 1-line confirmation |
 
 Sub-agent definitions live in `.opencode/agents/` (and `.claude/agents/`). The `verified-research` sub-agent is dynamically compiled from `templates/VERIFIED-RESEARCH-README.md` at dispatch time, guaranteeing that human guidelines and AI behavior stay perfectly synchronized.
+
+### Verified Research Orchestration (2x2 Matrix)
+
+To prevent context window exhaustion (e.g. 128k RoPE boundaries on local models) and avoid memory thrashing on Apple Silicon Unified Memory, verified research operates on a **2x2 Matrix**:
+
+| Mode \ Environment | **Automated Work-Loop** (`run-loop.py`) | **Interactive Session** (`opencode` TUI) |
+|---|---|---|
+| **Path A: Upfront (De Novo)**<br>*(Explicit request for new deep research)* | Triggered via `LOOP-PROMPT.md` Step 7.<br>Orchestrator breaks question into 2–4 subtopics $\rightarrow$ dispatches `research-worker` **serially** to local staging (`{ITEM_DIR}/context/research/raw-*.md`) $\rightarrow$ synthesizes standard note for Human Gate review (`needs-review`). | Triggered by direct user prompt.<br>Main agent delegates to `verified-research` subagent $\rightarrow$ worker fetches out-of-band $\rightarrow$ writes `03 Verified Research/{Topic}.md` $\rightarrow$ returns 1-line confirmation. |
+| **Path B: Retrospective (Synthesis)**<br>*(Compiling an established dialogue into a note)* | Item has discussed findings across multiple iterations in `CONVERSATION.md`.<br>Agent invokes `verified-research` with conversation summary $\rightarrow$ synthesizes note using in-context quotes without re-fetching cited web pages. | User and agent explored a topic over a long interactive chat.<br>Main agent **never re-fetches web pages in the main thread**; it delegates synthesis to `verified-research` or compiles directly from in-context quotes. |
+
+#### Key Architectural Guardrails:
+1. **Zero Raw Ingestion in Main Context**: The main conversation thread (in both interactive sessions and work-loop turns) must never fetch raw HTML or read full 500-line sample notes into its working context.
+2. **Context-Isolated Leaf Workers**: `research-worker` subagents execute with minimal permissions, write raw extracts to disk (`{ITEM_DIR}/context/research/raw-*.md`), and return *only* `Done: Raw research written to {OUTPUT_FILE}`, freeing their KV cache memory immediately.
+3. **Serial Execution on Local Hardware**: Workers are dispatched one at a time (serially) rather than concurrently, maintaining a flat memory footprint (~24GB weights + ~1–2GB active KV cache) on Apple Silicon / MLX.
+4. **Staging $\rightarrow$ Promotion Lifecycle**: Raw extracts stay isolated in local staging (`{ITEM_DIR}/context/research/`) during research. Only the finalized, approved synthesis note is promoted to `03 Verified Research/`.
 
 ## Loop Execution Order
 

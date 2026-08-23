@@ -28,7 +28,7 @@ MyNotebook/
 │   │   ├── VERIFIED-RESEARCH-README.md ← single source of truth for 03 Verified Research
 │   │   └── WORK.md         ← master dashboard outline template
 │   └── .claude/ or .opencode/  ← agent config (harness-dependent)
-│       └── agents/         ← subagent definitions (critic.md, code-reviewer.md, verified-research.md)
+│       └── agents/         ← subagent definitions (critic.md, code-reviewer.md, verified-research.md, research-worker.md)
 └── Work-Loop-Items/        ← work items (part of the vault, not the scripts repo)
     ├── WORK.md             ← main work item table / dashboard
     └── <item-id>/          ← one folder per work item
@@ -41,7 +41,8 @@ MyNotebook/
         │       └── runs/   ← per-run summaries (research.md / task.md)
         ├── RUNS.md         ← (script/research items) run history + config
         ├── background.md   ← (optional) internal context
-        ├── context/        ← (optional) shared context notes (child reports live here)
+        ├── context/        ← (optional) shared context notes (child reports & research staging live here)
+        │   └── research/   ← (optional) in-flight raw research extracts (raw-*.md)
         └── runs/           ← (script/research items) per-run directories
 ```
 
@@ -55,8 +56,8 @@ MyNotebook/
 | `config.json` | Harness type, work_dir, model, budget, remote settings |
 | `templates/` | Single sources of truth for vault rules (`vault-AGENTS.md`), research guidelines (`VERIFIED-RESEARCH-README.md`), and dashboard schema (`WORK.md`). |
 | `../Work-Loop-Items/WORK.md` | The work item table / dashboard (source of truth for status) |
-| `prompts/BASE-PROMPT.md` | Base execution rules (reasoning budget & fast-path) prepended to all prompts |
-| `prompts/LOOP-PROMPT.md` | Prompt injected for `analyze`/`ready`/`resolved` items |
+| `prompts/BASE-PROMPT.md` | Base execution rules (reasoning budget, fast-path, and interactive research delegation) prepended to all prompts |
+| `prompts/LOOP-PROMPT.md` | Prompt injected for `analyze`/`ready`/`resolved` items (includes Step 7 Verified Research) |
 | `prompts/IMPL-PROMPT.md` | Prompt injected for `implement` items |
 | `prompts/RESOLVE-PROMPT.md` | Prompt injected for `resolved` items (summarize problem/resolution) |
 | `prompts/UPDATE-RESEARCH-PROMPT.md` | Prompt for `research` items + child research (unified parent/child modes) |
@@ -187,7 +188,18 @@ The loop automatically provisions and maintains the vault environment it is atta
 3. **Explicit CLI Bootstrap:**
    - Initialize any vault on-demand: `python3 run-loop.py --init-vault "/path/to/Vault"`.
 
-## Dynamic Subagent Templating
+## Subagents & 2x2 Research Orchestration
+
+Work-Loop equips the LLM harness with specialized subagents to keep the primary reasoning context clean and ensure rigor:
+
+| Subagent | Role | Model / Permissions | Purpose |
+|---|---|---|---|
+| `critic` | Reviewer | Subagent (Read-only, no bash/edit) | Evaluates draft findings for unverified assertions, inaccessible links, and logical gaps before the user sees them. |
+| `code-reviewer` | Reviewer | Subagent (Bash allowed for running tests, edit denied) | Evaluates code changes for correctness, edge cases, and test coverage. |
+| `verified-research` | Orchestrator | Subagent (Read/write, dynamically templated) | Coordinates multi-topic deep research (Path A) or synthesizes existing conversation findings (Path B). |
+| `research-worker` | Leaf Worker | Subagent (Write/read allowed, bash/edit denied) | Executes focused searches for a single subtopic, writes raw extracts directly to a staging file, and returns a 1-line confirmation. |
+
+### Dynamic Subagent Templating
 
 To maintain a strict **Single Source of Truth**, subagent definitions in `.opencode/agents/` and `.claude/agents/` use dynamic anchor tags referencing master templates in `templates/`:
 
@@ -196,6 +208,21 @@ To maintain a strict **Single Source of Truth**, subagent definitions in `.openc
 * **`{{templates/VERIFIED-RESEARCH-README.md#3}}`** → Section 3: Verification Rules (Source hierarchy, quote mandate, wikilink provenance).
 
 **Resolution:** When `_sync_agent_dir` copies agent definitions to the active workspace (`02-Work-Loop-Items/.opencode/agents/`) or remote dispatch stages them, Work-Loop automatically resolves these anchors on-the-fly, giving the running LLM a 100% self-contained system prompt without filesystem overhead.
+
+### The 2x2 Research Matrix & Local Hardware Guardrails
+
+To prevent 128k RoPE context window exhaustion and avoid KV cache memory thrashing on Apple Silicon Unified Memory (e.g. MLX / llama.cpp on Mac Studio M3 Ultra), research follows the **2x2 Matrix**:
+
+| Mode \ Environment | **1. Automated Work-Loop** (`run-loop.py`) | **2. Interactive Session** (`opencode` TUI) |
+|---|---|---|
+| **Path A: Upfront (De Novo)**<br>*(Explicit request for new deep web research)* | Triggered via `LOOP-PROMPT.md` Step 7.<br>Orchestrator breaks topic into 2–4 subtopics $\rightarrow$ dispatches `research-worker` **serially** to local staging (`{ITEM_DIR}/context/research/raw-*.md`) $\rightarrow$ synthesizes standard note for `needs-review`. | Triggered by user prompt.<br>Main agent dispatches `verified-research` $\rightarrow$ worker fetches out-of-band $\rightarrow$ writes `03 Verified Research/{Topic}.md` $\rightarrow$ returns 1-line confirmation. |
+| **Path B: Retrospective (Synthesis)**<br>*(Compiling an established dialogue into a note)* | Item has discussed findings across multiple iterations in `CONVERSATION.md`.<br>Agent invokes `verified-research` with conversation summary $\rightarrow$ synthesizes note using in-context quotes without re-fetching cited web pages. | User and agent explored a topic over a long interactive chat.<br>Main agent **never re-fetches web pages in the main thread**; it delegates synthesis to `verified-research` or compiles directly from in-context quotes. |
+
+#### Architectural Guardrails:
+1. **Primary Context Protection**: The main thread must never fetch raw HTML or read full multi-KB reference notes. Note creation is always delegated out-of-band.
+2. **Context-Isolated Leaf Workers**: `research-worker` subagents write raw findings to disk and return *only* `Done: Raw research written to {OUTPUT_FILE}`, freeing their KV cache instantly.
+3. **Serial Execution on Apple Silicon**: Subagents are dispatched one at a time to prevent concurrent slot thrashing and keep GPU memory flat (~24GB).
+4. **Staging $\rightarrow$ Promotion Lifecycle**: Raw extracts remain in `{ITEM_DIR}/context/research/raw-*.md` during analysis and are promoted to `03 Verified Research/` only upon human approval.
 
 ## Loop Execution
 

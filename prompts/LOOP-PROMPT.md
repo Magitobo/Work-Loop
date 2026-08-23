@@ -295,9 +295,10 @@ Synthesize child run results in your CONVERSATION.md findings:
 
 ## Step 7 — Verified Research (On Request)
 
-When the user asks you to research a question from the web, invoke the verified-research
-sub-agent. This agent performs multi-angle search with source verification, claim extraction
-with confidence ratings, and contradiction resolution.
+When the user asks you to research a question from the web or compile verified research into `03 Verified Research/`, invoke the verified-research orchestrator subagent (`subagent_type="verified-research"`).
+
+### Path A: Upfront (De Novo) Research
+When the user requests new web research on a topic:
 
 **`subagent_type="verified-research"`:**
 
@@ -305,19 +306,33 @@ with confidence ratings, and contradiction resolution.
 Research this question and return verified findings.
 
 ITEM_DIR: {ITEM_DIR}
+Mode: de_novo
 
 Research question: {the user's question}
 Context: {any relevant context from the conversation or ITEM_DIR}
 Output note path: {where to write the synthesized note, if requested}
 BACKLINK_TARGET: {ITEM_ID}/CONVERSATION
 
-Perform all 6 phases: Query Expansion, Source Fetch + Rate, Extract + Rate Claims,
-Synthesize, Coverage Check, and return structured output.
+Decompose into 2–4 subtopics, dispatch research-worker serially to stage raw findings, and synthesize structured output.
 ```
 
-Wait for it to complete. Then present its findings to the user. The user may ask you to
-refine sources, investigate specific claims further, or adjust the synthesis before
-writing the final note to the vault.
+### Path B: Retrospective Discussion Synthesis
+When a discussion in `CONVERSATION.md` has already established findings, verbatim quotes, and URLs, and the user asks to compile a note into `03 Verified Research/`:
 
-**When to use:** The user explicitly asks for web research, fact-checking, or information
-discovery on a topic. Do NOT invoke proactively — only when the user requests it.
+**`subagent_type="verified-research"`:**
+
+```
+Synthesize verified research note from established discussion.
+
+ITEM_DIR: {ITEM_DIR}
+Mode: discussion_synthesis
+Target note path: 03 Verified Research/{Topic}.md
+BACKLINK_TARGET: {ITEM_ID}/CONVERSATION
+
+Summary of established findings, claims, quotes, and URLs from conversation:
+{paste summary of claims, verbatim quotes, and source URLs}
+```
+
+Wait for it to complete. In Path A, present its findings in `CONVERSATION.md` for user review (`needs-review`). In Path B, confirm note creation.
+
+**When to use:** The user explicitly asks for web research, fact-checking, or note compilation in `03 Verified Research/`. Do NOT invoke proactively — only when the user requests it. Never perform multi-query web searches or re-fetches directly in the main conversation context.

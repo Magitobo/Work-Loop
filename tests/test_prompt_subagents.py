@@ -112,6 +112,7 @@ _PROMPT_FILES = [
     "RESOLVE-PROMPT.md",
     "UPDATE-RESEARCH-PROMPT.md",
     "TASK-PROMPT.md",
+    "BASE-PROMPT.md",
 ]
 
 
@@ -154,6 +155,17 @@ class TestSubagentReferences(unittest.TestCase):
                      f"agent definition found in .opencode/agents/ or .claude/agents/"),
                 )
 
+        for agent_name, agent_path in all_agents.items():
+            text = agent_path.read_text()
+            refs = _find_subagent_refs(text)
+            for ref in refs:
+                self.assertIn(
+                    ref,
+                    all_agents,
+                    (f"Agent definition {agent_path.name} references subagent_type=\"{ref}\" "
+                     f"but no matching agent definition found"),
+                )
+
     def test_no_orphan_opencode_agents(self):
         """OpenCode agents that aren't referenced by any prompt are flagged."""
         all_refs: set[str] = set()
@@ -162,6 +174,9 @@ class TestSubagentReferences(unittest.TestCase):
             if not prompt_path.is_file():
                 continue
             all_refs.update(_find_subagent_refs(prompt_path.read_text()))
+
+        for agent_path in self.opencode_agents.values():
+            all_refs.update(_find_subagent_refs(agent_path.read_text()))
 
         for agent_name in self.opencode_agents:
             self.assertIn(
@@ -286,3 +301,118 @@ class TestCodeReviewerAgentDefinition(unittest.TestCase):
         prompt = (_PROMPTS_DIR / "IMPL-PROMPT.md").read_text()
         self.assertIn('subagent_type="code-reviewer"', prompt,
                        "IMPL-PROMPT must spawn code-reviewer subagent")
+
+
+class TestResearchWorkerAgentDefinition(unittest.TestCase):
+    """Validate the research-worker leaf agent definition."""
+
+    def test_research_worker_opencode_exists(self):
+        p = _HERE / ".opencode" / "agents" / "research-worker.md"
+        self.assertTrue(p.is_file(), "OpenCode research-worker agent file missing")
+
+    def test_research_worker_claude_exists(self):
+        p = _HERE / ".claude" / "agents" / "research-worker.md"
+        self.assertTrue(p.is_file(), "Claude research-worker agent file missing")
+
+    def test_research_worker_opencode_is_subagent(self):
+        p = _HERE / ".opencode" / "agents" / "research-worker.md"
+        fm = _parse_frontmatter(p.read_text())
+        self.assertIsNotNone(fm, "No YAML frontmatter in research-worker.md")
+        self.assertEqual(fm.get("mode"), "subagent")
+
+    def test_research_worker_opencode_permissions(self):
+        p = _HERE / ".opencode" / "agents" / "research-worker.md"
+        fm = _parse_frontmatter(p.read_text())
+        self.assertEqual(fm.get("permission.edit"), "deny")
+        self.assertEqual(fm.get("permission.bash"), "deny")
+        self.assertEqual(fm.get("permission.write"), "allow")
+        self.assertEqual(fm.get("permission.read"), "allow")
+
+    def test_research_worker_claude_permissions(self):
+        p = _HERE / ".claude" / "agents" / "research-worker.md"
+        fm = _parse_frontmatter(p.read_text())
+        self.assertEqual(fm.get("permission.edit"), "deny")
+        self.assertEqual(fm.get("permission.bash"), "deny")
+        self.assertEqual(fm.get("permission.write"), "allow")
+        self.assertEqual(fm.get("permission.read"), "allow")
+
+    def test_research_worker_description_in_frontmatter(self):
+        p = _HERE / ".opencode" / "agents" / "research-worker.md"
+        fm = _parse_frontmatter(p.read_text())
+        self.assertIn("description", fm)
+        self.assertTrue(len(fm["description"]) > 15, "Description too short")
+
+    def test_research_worker_one_line_return_instruction(self):
+        p = _HERE / ".opencode" / "agents" / "research-worker.md"
+        text = p.read_text()
+        self.assertIn("Done: Raw research written to", text)
+        self.assertRegex(text, r"(?i)return\s+.*only", "Worker must instruct minimal return")
+
+    def test_research_worker_context_protection(self):
+        p = _HERE / ".opencode" / "agents" / "research-worker.md"
+        text = p.read_text()
+        self.assertIn("Context Window Protection", text)
+
+
+class TestVerifiedResearchAgentDefinition(unittest.TestCase):
+    """Validate the verified-research orchestrator agent definition."""
+
+    def test_verified_research_opencode_exists(self):
+        p = _HERE / ".opencode" / "agents" / "verified-research.md"
+        self.assertTrue(p.is_file(), "OpenCode verified-research agent file missing")
+
+    def test_verified_research_claude_exists(self):
+        p = _HERE / ".claude" / "agents" / "verified-research.md"
+        self.assertTrue(p.is_file(), "Claude verified-research agent file missing")
+
+    def test_verified_research_opencode_is_subagent(self):
+        p = _HERE / ".opencode" / "agents" / "verified-research.md"
+        fm = _parse_frontmatter(p.read_text())
+        self.assertEqual(fm.get("mode"), "subagent")
+
+    def test_verified_research_permissions(self):
+        p = _HERE / ".opencode" / "agents" / "verified-research.md"
+        fm = _parse_frontmatter(p.read_text())
+        self.assertEqual(fm.get("permission.edit"), "deny")
+        self.assertEqual(fm.get("permission.bash"), "deny")
+
+    def test_verified_research_has_dynamic_anchors(self):
+        p = _HERE / ".opencode" / "agents" / "verified-research.md"
+        text = p.read_text()
+        self.assertIn("{{templates/VERIFIED-RESEARCH-README.md#1}}", text)
+        self.assertIn("{{templates/VERIFIED-RESEARCH-README.md#2}}", text)
+        self.assertIn("{{templates/VERIFIED-RESEARCH-README.md#3}}", text)
+
+    def test_verified_research_spawns_research_worker(self):
+        p = _HERE / ".opencode" / "agents" / "verified-research.md"
+        text = p.read_text()
+        self.assertIn('subagent_type="research-worker"', text)
+
+    def test_verified_research_supports_path_a_and_b(self):
+        p = _HERE / ".opencode" / "agents" / "verified-research.md"
+        text = p.read_text()
+        self.assertIn("Path A", text)
+        self.assertIn("Path B", text)
+
+    def test_loop_prompt_spawns_verified_research(self):
+        prompt = (_PROMPTS_DIR / "LOOP-PROMPT.md").read_text()
+        self.assertIn('subagent_type="verified-research"', prompt)
+
+    def test_base_prompt_spawns_verified_research(self):
+        prompt = (_PROMPTS_DIR / "BASE-PROMPT.md").read_text()
+        self.assertIn('subagent_type="verified-research"', prompt)
+
+    def test_verified_research_context_protection(self):
+        p = _HERE / ".opencode" / "agents" / "verified-research.md"
+        text = p.read_text()
+        self.assertIn("Context Window Protection", text)
+
+    def test_verified_research_one_line_return_instruction(self):
+        p = _HERE / ".opencode" / "agents" / "verified-research.md"
+        text = p.read_text()
+        self.assertIn("Done: Verified research note written to", text)
+
+
+if __name__ == "__main__":
+    unittest.main()
+

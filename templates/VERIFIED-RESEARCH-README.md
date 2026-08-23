@@ -70,8 +70,9 @@ Continue with flowing prose for each sub-topic...
 
 ## 3. Verification Rules for Authors & Agents
 
-1. **No Assertion Without Fetching & Quoting:**
-   - Never assert a fact from memory or inference. Always fetch the source content and extract an exact verbatim quote.
+1. **No Assertion Without Fetching & Quoting (Path A & Path B):**
+   - **Path A (De Novo Research):** When researching a new topic, always fetch the source content and extract exact verbatim quotes. Never assert facts from ungrounded memory.
+   - **Path B (Discussion Synthesis):** When synthesizing findings from an existing in-depth conversation or work item, use the verbatim quotes and URLs already established in the dialogue as valid primary grounding inputs. Do not perform redundant re-fetches in the primary session context; only dispatch an out-of-band worker if critical quotes are missing.
 2. **Source Hierarchy:**
    - **Primary Sources** (Official government portals, bank terms of service, technical specs, direct API docs): Highest priority.
    - **Secondary Sources** (Reputable news outlets, established industry blogs): Moderate priority; require corroboration where possible.
