@@ -10,7 +10,7 @@ Work-Loop watches a Markdown dashboard (`WORK.md`) in your Obsidian vault and ru
 | Keep a note current from a fixed list of web sources | **Routine: track sources** | `RUNS.md` with `type: research` |
 | Periodically scan local folders and get suggested actions | **Routine: scan files** (attached only) | `RUNS.md` with `type: task` |
 | Run a shell command on one or more machines, with optional AI summary | **Routine: run command** | `RUNS.md` with `command:` |
-| Get a one-off, fully sourced answer saved as a vetted note | **Verified research** (ask inside a thread) | output in `03 Verified Research/` |
+| Get a fully sourced answer saved as a vetted note, and keep it current | **Verified research** (ask inside a thread) | output in `03 Verified Research/` |
 
 A routine is either **standalone** (its own row in `WORK.md`) or **attached** to a thread. The code calls attached routines *child agents*.
 
@@ -330,12 +330,24 @@ analysis_prompt: Summarize the results    # optional: AI prompt to analyze aggre
 
 ## Verified Research
 
-Verified research is an action you ask for inside a thread, not an item type. Ask in your reply, e.g. *"Do verified research on X and create a note in 03 Verified Research/"*, or *"Compile what we've found into a verified research note"*, then tick **Continue Analyze**.
+Verified research is an action you ask for inside a thread, not an item type. It produces one note per topic in `03 Verified Research/` and runs in two steps:
 
-- **New research:** the agent splits the question into 2–4 subtopics and researches each one. Raw extracts are staged in `{ITEM_DIR}/context/research/raw-*.md`. It then writes one structured note (claims with confidence ratings, quotes, sources) and sets `needs-review` so you can check it.
-- **Compile from the thread:** builds the note from quotes and URLs already in `CONVERSATION.md`, without fetching the web again.
+1. **Research:** a vault scan first, then the web.
+   - Existing verified notes: high-confidence claims that are still within `review-due` are reused, and everything else is re-checked.
+   - `50 Raw/`: searched by content across all folders. Web clips are treated as snapshots of their source; AI answers (Perplexity, clipped chats) are treated as leads to trace.
+   - The web: only for gaps, stale or weak claims and untraced leads, plus a sweep for recent changes.
+   - Raw findings are staged as `raw-*.md` files.
+2. **Synthesize:** one Wikipedia-style note with a footnote for every claim. An existing note on the topic is updated in place, not duplicated.
 
-Notes follow the rules in `03 Verified Research/README.md` (scaffolded from `templates/VERIFIED-RESEARCH-README.md`). Verified research runs only when you ask for it. For interactive sessions in the vault, the scaffold also installs two skills from `templates/skills/`: `verified-research` (new research) and `synthesize-research` (saves the chat to `50 Raw/`, then compiles a note from it). See [Under the Hood](#under-the-hood) for how it is orchestrated.
+| Mode | Steps | Ask e.g. |
+|---|---|---|
+| `research` | Research → Synthesize | *"Do verified research on X"* |
+| `synthesize` | Synthesize only, from this thread or named `50 Raw/` notes/folders | *"Compile what we've found into a verified research note"* |
+| `refresh` | Re-verify an existing note → update it in place | *"Refresh the verified note on X"* |
+
+In a thread, the result is written as a draft to `{ITEM_DIR}/context/research/draft-*.md` and the thread goes to `needs-review`. After you approve it, the next round promotes it into `03 Verified Research/`. A refresh adds a **Revision History** line. For a dead or changed link, it falls back to the Wayback Machine snapshot closest to the original fetch date.
+
+Notes follow the rules in `03 Verified Research/README.md` (scaffolded from `templates/VERIFIED-RESEARCH-README.md`). For interactive sessions in the vault, the scaffold also installs three skills from `templates/skills/`: `verified-research`, `synthesize-research` and `refresh-research`. These write directly to `03 Verified Research/`. To be reminded about notes due for review, see the upkeep routine in the [Tutorial](docs/TUTORIAL.md#a-research-workflow-end-to-end). See [Under the Hood](#under-the-hood) for how it is orchestrated.
 
 ## Remote Dispatch
 
@@ -437,22 +449,28 @@ Prompt-driven agents delegate focused work to sub-agents:
 |---|---|---|
 | `critic` | Reviewer | Reviews draft findings for unverified claims, inaccessible resources, and gaps |
 | `code-reviewer` | Reviewer | Reviews code changes for correctness, edge cases, and test coverage |
-| `verified-research` | Orchestrator | Runs verified research: new research (Path A) or compiling from the thread (Path B) |
-| `research-worker` | Leaf Worker | Performs targeted web search for a single subtopic, writes raw extracts to a staging file, and returns a 1-line confirmation |
+| `verified-research` | Orchestrator | Runs verified research in `research`, `synthesize` or `refresh` mode: dispatches workers, then synthesizes the note |
+| `research-worker` | Leaf Worker | `scope: vault` scans `03 Verified Research/` and `50 Raw/`; `scope: web` searches, re-verifies claims and traces leads. Writes raw extracts to a staging file and returns a 1-line confirmation |
 
-Sub-agent definitions live in `.opencode/agents/` (and `.claude/agents/`). The `verified-research` sub-agent is compiled from `templates/VERIFIED-RESEARCH-README.md` at dispatch time, so the human guidelines and the agent's behaviour stay in sync.
+Sub-agent definitions live in `.opencode/agents/` (and `.claude/agents/`). The `verified-research` and `research-worker` sub-agents are compiled from `templates/VERIFIED-RESEARCH-README.md` at dispatch time, so the human guidelines and the agent's behaviour stay in sync.
 
-### Verified Research Orchestration (2x2 Matrix)
+### Verified Research Orchestration
 
-To prevent context window exhaustion (e.g. 128k RoPE boundaries on local models) and avoid memory thrashing on Apple Silicon Unified Memory, verified research operates on a **2x2 Matrix**:
+To prevent context window exhaustion (e.g. 128k RoPE boundaries on local models) and avoid memory thrashing on Apple Silicon Unified Memory, all heavy reading happens in context-isolated workers that write to staging files:
 
-| Mode \ Environment | **Automated Work-Loop** (`run-loop.py`) | **Interactive Session** (`opencode` TUI) |
+| Mode | Flow |
+|---|---|
+| `research` (formerly Path A, *de novo*) | `research-worker` `scope: vault` → `raw-vault.md` (existing note, claims to reuse/re-verify, clip snapshots, AI-answer leads) → orchestrator plans 2–4 subtopics from the gaps → `research-worker` `scope: web` **serially** → `raw-{subtopic}.md` → synthesize (update or create) |
+| `synthesize` (formerly Path B, *discussion synthesis*) | Orchestrator reads the given raw sources (thread, `50 Raw/` notes or folders, staged raw files) → synthesize, without web fetches unless a critical quote is missing |
+| `refresh` | Like `research`, seeded by the existing note: every past-due, medium/low or anecdotal claim is re-verified, `50 Raw/` notes newer than `last-researched` are added, and dead links fall back to the Wayback Machine → update in place + Revision History |
+
+| Environment | Staging | Output |
 |---|---|---|
-| **Path A: Upfront (De Novo)**<br>*(Explicit request for new deep research)* | Triggered via `LOOP-PROMPT.md` Step 7.<br>Orchestrator breaks question into 2–4 subtopics $\rightarrow$ dispatches `research-worker` **serially** to local staging (`{ITEM_DIR}/context/research/raw-*.md`) $\rightarrow$ synthesizes standard note for Human Gate review (`needs-review`). | Triggered by direct user prompt.<br>Main agent delegates to `verified-research` subagent $\rightarrow$ worker fetches out-of-band $\rightarrow$ writes `03 Verified Research/{Topic}.md` $\rightarrow$ returns 1-line confirmation. |
-| **Path B: Retrospective (Synthesis)**<br>*(Compiling an established dialogue into a note)* | Item has discussed findings across multiple iterations in `CONVERSATION.md`.<br>Agent invokes `verified-research` with conversation summary $\rightarrow$ synthesizes note using in-context quotes without re-fetching cited web pages. | User and agent explored a topic over a long interactive chat.<br>Main agent **never re-fetches web pages in the main thread**; it delegates synthesis to `verified-research` or compiles directly from in-context quotes. |
+| **Work-Loop** (`LOOP-PROMPT.md` Step 7) | `{ITEM_DIR}/context/research/` | Draft `draft-{topic}.md`; the thread agent promotes it to `03 Verified Research/` after the user approves (`needs-review`) |
+| **Interactive session** (vault skills) | `.research-staging/{topic}/` at the vault root | Written directly to `03 Verified Research/{Topic}.md`; 1-line confirmation |
 
 #### Key Architectural Guardrails
 1. **Zero Raw Ingestion in Main Context**: The main conversation thread (in both interactive sessions and work-loop turns) must never fetch raw HTML or read full 500-line sample notes into its working context.
-2. **Context-Isolated Leaf Workers**: `research-worker` subagents execute with minimal permissions, write raw extracts to disk (`{ITEM_DIR}/context/research/raw-*.md`), and return *only* `Done: Raw research written to {OUTPUT_FILE}`, freeing their KV cache memory immediately.
+2. **Context-Isolated Leaf Workers**: `research-worker` subagents execute with minimal permissions (no shell), write raw extracts to disk (`raw-*.md` in the staging directory), and return *only* `Done: Raw research written to {OUTPUT_FILE}`, freeing their KV cache memory immediately.
 3. **Serial Execution on Local Hardware**: Workers are dispatched one at a time (serially) rather than concurrently, maintaining a flat memory footprint (~24GB weights + ~1–2GB active KV cache) on Apple Silicon / MLX.
-4. **Staging $\rightarrow$ Promotion Lifecycle**: Raw extracts stay isolated in local staging (`{ITEM_DIR}/context/research/`) during research. Only the finalized, approved synthesis note is promoted to `03 Verified Research/`.
+4. **Staging $\rightarrow$ Promotion Lifecycle**: Raw extracts and drafts stay isolated in staging during research. In the work loop, only the approved draft is promoted to `03 Verified Research/`.

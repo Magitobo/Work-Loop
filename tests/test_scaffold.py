@@ -117,6 +117,7 @@ def test_scaffold_vault_full(tmp_path: Path):
     assert (vault_dir / ".agents" / "skills" / "synthesize-research" / "SKILL.md").is_file()
     assert (vault_dir / ".opencode" / "skills" / "verified-research" / "SKILL.md").is_file()
     assert (vault_dir / ".claude" / "skills" / "synthesize-research" / "SKILL.md").is_file()
+    assert (vault_dir / ".claude" / "skills" / "refresh-research" / "SKILL.md").is_file()
     assert (work_dir / "WORK.md").is_file()
     assert len(res['created']) >= 5
 
@@ -407,7 +408,11 @@ def test_sync_agent_dir_renders_note_template(tmp_path: Path):
     assert "{{" not in rendered_content
     assert "Layered Single-Note Model" in rendered_content
     assert "last-researched:" in rendered_content
-    assert "No Assertion Without Fetching & Quoting" in rendered_content
+    assert "No Assertion Without a Verbatim Quote From the Original Source" in rendered_content
+
+    worker = (work_dir / ".opencode" / "agents" / "research-worker.md").read_text()
+    assert "{{" not in worker
+    assert "Research Order — Vault First, Then Web" in worker
 
 
 def test_render_raises_on_missing_template(tmp_path: Path):

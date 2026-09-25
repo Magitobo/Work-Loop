@@ -12,7 +12,7 @@ You work with just two things, plus one action you can ask for:
 |---|---|---|
 | Work through a problem with an agent, and optionally have it write code | **Thread** | `<ID>/CONVERSATION.md` |
 | Repeat a job on a schedule: keep a note up to date from web sources, scan folders for tidy-up suggestions, or run a shell command on some machines | **Routine** | `RUNS.md` |
-| Get a one-off, fully sourced answer saved as a vetted note | **Verified research**, which you ask for inside a thread | `03 Verified Research/<Topic>.md` |
+| Get a fully sourced answer saved as a vetted note, and keep it current | **Verified research**, which you ask for inside a thread | `03 Verified Research/<Topic>.md` |
 
 Routines come in three kinds:
 
@@ -110,23 +110,69 @@ The agent runs from inside `work_dir`, follows the plan from the thread (or an `
 
 ## 4. Asking for verified research
 
-Normal analysis rounds use whatever the agent can find quickly. When you need an answer you can trust later, with every claim backed by a quoted source, ask for **verified research** in your reply and tick **Continue Analyze**.
+Normal analysis rounds use whatever the agent can find quickly. When you need an answer you can trust later, with every claim backed by a quoted source, ask for **verified research**. The result is one note in `03 Verified Research/` per topic.
 
-There are two ways to phrase it:
+### How it works: research, then synthesize
 
-- **Research something new:**
-  > Do verified research on the tax treatment of MM2H visa holders and create a note in 03 Verified Research/.
+Verified research runs in two steps:
 
-  The agent splits the question into 2–4 subtopics and researches each one separately. Raw extracts are staged in `<ID>/context/research/raw-*.md`. The agent then writes one structured note (summary, claims with confidence, sources) and sets `needs-review`, so you check it before relying on it.
+1. **Research** collects evidence as verbatim, dated quotes, rated by source type and confidence. It looks in order of trust:
+   1. **What you've already verified:** existing notes in `03 Verified Research/`. High-confidence claims that are still within their `review-due` date are reused as they are. Everything else gets re-checked.
+   2. **What you've collected:** `50 Raw/`, searched by content across *all* folders, so it doesn't matter where the inbox sorter put something. Clipped web pages count as snapshots of their source. Perplexity answers and clipped AI chats only count as **leads**: the research follows the links they cite and quotes the original.
+   3. **The web:** only for what the vault couldn't settle (gaps, stale or weak claims, untraced leads), plus a quick check for recent changes.
+2. **Synthesize** turns that material into one readable note with footnotes. If a note on the topic already exists, it's **updated**, not duplicated.
 
-- **Turn what the thread already found into a note:**
-  > Compile what we've found so far into a verified research note.
+Synthesize can also run on its own when you've done the research some other way, for example in a chat or by clipping pages.
 
-  The agent builds the note from the quotes and links already in the thread. It doesn't fetch the web again.
+### Asking for it
+
+Write your request in your reply and tick **Continue Analyze**:
+
+| You want to… | Say something like | Mode |
+|---|---|---|
+| Research a question or topic | *"Do verified research on the tax treatment of MM2H visa holders."* | research |
+| Turn material you already have into a note | *"Compile what we've found so far into a verified research note."* or *"Synthesize my clips in 50 Raw/Malaysia about MM2H."* | synthesize |
+| Bring an existing note up to date | *"Refresh the verified note on Canadian cross-border tax accountants."* | refresh |
+
+In a thread, the result is a **draft** in `<ID>/context/research/`. The agent links it, tells you whether it's a new note or an update, and sets `needs-review`. When you approve it in your reply, the next round copies it into `03 Verified Research/`. Nothing lands there without your OK.
+
+A **refresh** keeps claims that are still in date. It re-checks the rest, adds anything you've clipped since the note was last researched, and records what changed in the note's **Revision History**. If a cited page has disappeared, it falls back to the page's copy in the Internet Archive's Wayback Machine. If that copy still contains the quote, the claim is kept with an "archived copy" link. If not, the claim is downgraded and listed under **Open Questions**.
 
 The note format and sourcing rules are in `03 Verified Research/README.md` in your vault.
 
-You can do the same outside the loop. The vault scaffold installs two skills for interactive Claude or OpenCode sessions opened in your vault: `verified-research` researches something new, and `synthesize-research` saves the current chat to `50 Raw/` and compiles a note from it. Verified research only runs when you ask for it. It is a one-off action, not a routine. To keep a topic up to date over time, use a *track sources* routine (§5 and §6).
+**Outside the loop:** the vault scaffold installs three skills for interactive Claude or OpenCode sessions opened in your vault: `verified-research` (research), `synthesize-research` (synthesize this chat or your `50 Raw/` notes) and `refresh-research` (refresh). In interactive sessions the note is written straight to `03 Verified Research/`.
+
+Verified research only runs when you ask for it. To follow a fixed set of web pages on a schedule, use a *track sources* routine instead (§5 and §6).
+
+### A research workflow, end to end
+
+Here is how the pieces fit together for the typical "I found something interesting" case:
+
+| Step | What happens | Who does it |
+|---|---|---|
+| 1. Capture | You find something while browsing and clip it with the Obsidian Web Clipper, or save a Perplexity answer, into `00 Inbox` | You |
+| 2. Sort | An inbox-sorter routine (a *scan files* routine, §5) moves clips into a topic folder under `50 Raw/` | Routine, daily |
+| 3. Research | Later you ask a thread for verified research on the topic. It finds your clips wherever they were sorted, verifies them, and expands on them from the web | You ask; the agent does the rest |
+| 4. Keep fresh | An upkeep routine lists verified notes that are due for review, or that have new related clips, under **Needs Attention**. You ask for a refresh of the ones you care about | Routine, weekly; you decide |
+
+For step 4, attach a routine like this to your vault-maintenance thread. Ask the thread to propose it:
+
+```markdown
+## Config
+type: task
+parent: Vault-maintenance
+title: Verified research upkeep
+note_path: ../context/research-upkeep.md
+schedule: 0 7 * * 1
+
+## Prompt
+Scan the frontmatter of every note in "03 Verified Research/" (skip README.md).
+1. List notes whose review-due is past or within 14 days, oldest first; put low-confidence notes first.
+2. For each verified note, list "50 Raw/" notes created after its last-researched date that match its topic
+   (title, tags, keywords).
+Propose "refresh <note>" for each note listed. Do not modify any notes.
+Set attention: yes when anything is listed.
+```
 
 ---
 
@@ -334,7 +380,7 @@ See the table at the end of [§5](#attached-routine-statuses).
 | Standalone routine | top-level `RUNS.md` item with its own row in `WORK.md` |
 | Living note | `note_path` (also `living_note_path`) |
 | Verified research | the `verified-research` sub-agent (with `research-worker` helpers), output in `03 Verified Research/` |
-| Research something new / compile from the thread | "Path A (de novo)" / "Path B (discussion synthesis)" in agent prompts |
+| Verified research modes: research / synthesize / refresh | `mode: research / synthesize / refresh` for the `verified-research` sub-agent. Older prompts call the first two "Path A (de novo)" and "Path B (discussion synthesis)" |
 | Action Center | the `[!action]` callout at the top of `CONVERSATION.md` |
 
 For configuration details, remote dispatch internals and how the sub-agents are arranged, see the [User's Guide](../README.md).

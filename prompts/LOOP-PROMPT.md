@@ -295,44 +295,29 @@ Synthesize child run results in your CONVERSATION.md findings:
 
 ## Step 7 — Verified Research (On Request)
 
-When the user asks you to research a question from the web or compile verified research into `03 Verified Research/`, invoke the verified-research orchestrator subagent (`subagent_type="verified-research"`).
+When the user asks for verified research, or to compile, save or refresh a note in `03 Verified Research/`, invoke the verified-research orchestrator subagent (`subagent_type="verified-research"`). It works in two steps — **research** (existing verified notes first, then `50 Raw/`, then the web) and **synthesize** — and has three modes:
 
-### Path A: Upfront (De Novo) Research
-When the user requests new web research on a topic:
-
-**`subagent_type="verified-research"`:**
-
-```
-Research this question and return verified findings.
-
-ITEM_DIR: {ITEM_DIR}
-Mode: de_novo
-
-Research question: {the user's question}
-Context: {any relevant context from the conversation or ITEM_DIR}
-Output note path: {where to write the synthesized note, if requested}
-BACKLINK_TARGET: {ITEM_ID}/CONVERSATION
-
-Decompose into 2–4 subtopics, dispatch research-worker serially to stage raw findings, and synthesize structured output.
-```
-
-### Path B: Retrospective Discussion Synthesis
-When a discussion in `CONVERSATION.md` has already established findings, verbatim quotes, and URLs, and the user asks to compile a note into `03 Verified Research/`:
+| The user asks to… | Mode |
+|---|---|
+| research a question or topic (new, or expand an existing note) | `research` |
+| compile findings that already exist — this thread, `50 Raw/` notes or folders they name — into a note | `synthesize` |
+| refresh / re-verify / update an existing verified note | `refresh` |
 
 **`subagent_type="verified-research"`:**
 
 ```
-Synthesize verified research note from established discussion.
-
 ITEM_DIR: {ITEM_DIR}
-Mode: discussion_synthesis
-Target note path: 03 Verified Research/{Topic}.md
 BACKLINK_TARGET: {ITEM_ID}/CONVERSATION
-
-Summary of established findings, claims, quotes, and URLs from conversation:
-{paste summary of claims, verbatim quotes, and source URLs}
+Mode: {research | synthesize | refresh}
+Question / topic: {the user's question or topic}
+Target note path: {03 Verified Research/{Topic}.md — required for refresh; for research, only if the user named one}
+Context: {relevant context from the conversation or ITEM_DIR}
+Raw sources: {synthesize only — paths the user named (50 Raw notes/folders, context/research/raw-*.md), plus
+             {ITEM_DIR}/CONVERSATION.md when compiling this thread; or paste the claims, verbatim quotes and URLs}
 ```
 
-Wait for it to complete. In Path A, present its findings in `CONVERSATION.md` for user review (`needs-review`). In Path B, confirm note creation.
+Wait for it to complete. It writes a **draft** to `{ITEM_DIR}/context/research/draft-{topic-slug}.md` and names the target path. In CONVERSATION.md, link the draft, say whether it creates a new note or updates an existing one (summarize the Revision History line for updates), and ask the user to approve it. The Status becomes `needs-review` as usual.
 
-**When to use:** The user explicitly asks for web research, fact-checking, or note compilation in `03 Verified Research/`. Do NOT invoke proactively — only when the user requests it. Never perform multi-query web searches or re-fetches directly in the main conversation context.
+**Promotion (on approval):** when the user approves a draft in a later round, copy it to its target path in `03 Verified Research/` (overwriting the old version for updates), and confirm with a wikilink. This is the one write you make outside `ITEM_DIR` and WORK.md.
+
+**When to use:** only when the user explicitly asks for web research, fact-checking, or a verified note. Do NOT invoke proactively. Never perform multi-query web searches, re-fetches or reads of `50 Raw/` folders directly in the main conversation context.

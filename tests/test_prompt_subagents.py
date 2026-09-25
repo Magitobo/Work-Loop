@@ -353,6 +353,17 @@ class TestResearchWorkerAgentDefinition(unittest.TestCase):
         text = p.read_text()
         self.assertIn("Context Window Protection", text)
 
+    def test_research_worker_has_vault_and_web_scopes(self):
+        text = (_HERE / ".opencode" / "agents" / "research-worker.md").read_text()
+        self.assertIn("## Scope: vault", text)
+        self.assertIn("## Scope: web", text)
+        self.assertIn("03 Verified Research/", text)
+        self.assertIn("50 Raw/", text)
+
+    def test_research_worker_includes_verification_rules(self):
+        text = (_HERE / ".opencode" / "agents" / "research-worker.md").read_text()
+        self.assertIn("{{templates/VERIFIED-RESEARCH-README.md#3}}", text)
+
 
 class TestVerifiedResearchAgentDefinition(unittest.TestCase):
     """Validate the verified-research orchestrator agent definition."""
@@ -391,15 +402,58 @@ class TestVerifiedResearchAgentDefinition(unittest.TestCase):
         text = p.read_text()
         self.assertIn('subagent_type="research-worker"', text)
 
-    def test_verified_research_supports_path_a_and_b(self):
+    def test_verified_research_supports_three_modes(self):
         p = _HERE / ".opencode" / "agents" / "verified-research.md"
         text = p.read_text()
-        self.assertIn("Path A", text)
-        self.assertIn("Path B", text)
+        for mode in ("`research`", "`synthesize`", "`refresh`"):
+            self.assertIn(mode, text)
+        # Legacy mode names from callers still in the wild must keep working
+        self.assertIn("`de_novo`", text)
+        self.assertIn("`discussion_synthesis`", text)
+
+    def test_verified_research_scans_vault_before_web(self):
+        text = (_HERE / ".opencode" / "agents" / "verified-research.md").read_text()
+        vault = text.index("scope: vault")
+        web = text.index("scope: web")
+        self.assertLess(vault, web, "Vault scan must be dispatched before web workers")
+
+    def test_verified_research_never_writes_03_directly_in_work_loop(self):
+        text = (_HERE / ".opencode" / "agents" / "verified-research.md").read_text()
+        self.assertIn("draft-{topic-slug}.md", text)
+        self.assertIn("never write into `03 Verified Research/` yourself", text)
+
+    def test_research_agents_claude_and_opencode_in_sync(self):
+        """The .opencode copies equal the .claude ones minus the model line and the sync-path comment."""
+        for name in ("verified-research", "research-worker"):
+            claude = (_HERE / ".claude" / "agents" / f"{name}.md").read_text()
+            expected = "".join(
+                line for line in claude.splitlines(keepends=True) if not line.startswith("model: ")
+            ).replace("(.claude/agents/)", "(.opencode/agents/)")
+            actual = (_HERE / ".opencode" / "agents" / f"{name}.md").read_text()
+            self.assertEqual(actual, expected, f"{name}: .opencode copy drifted from .claude")
 
     def test_loop_prompt_spawns_verified_research(self):
         prompt = (_PROMPTS_DIR / "LOOP-PROMPT.md").read_text()
         self.assertIn('subagent_type="verified-research"', prompt)
+
+    def test_loop_prompt_offers_modes_and_promotes_drafts(self):
+        prompt = (_PROMPTS_DIR / "LOOP-PROMPT.md").read_text()
+        step7 = prompt[prompt.index("## Step 7"):]
+        for mode in ("`research`", "`synthesize`", "`refresh`"):
+            self.assertIn(mode, step7)
+        self.assertIn("**Promotion (on approval):**", step7)
+
+    def test_skills_use_current_modes(self):
+        skills = _HERE / "templates" / "skills"
+        expected = {
+            "verified-research": "`research`",
+            "synthesize-research": "`synthesize`",
+            "refresh-research": "`refresh`",
+        }
+        for name, mode in expected.items():
+            text = (skills / name / "SKILL.md").read_text()
+            self.assertIn(f"name: {name}", text)
+            self.assertIn(f"`mode`: {mode}", text)
 
     def test_vault_agents_template_spawns_verified_research(self):
         prompt = (_HERE / "templates" / "vault-AGENTS.md").read_text()
