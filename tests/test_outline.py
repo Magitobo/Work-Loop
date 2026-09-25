@@ -344,6 +344,128 @@ class TestStreamlinedTableWorkFormat(unittest.TestCase):
         self.assertIn("ITEM-003", active_lines[2])  # 2026-08-17 22:04
 
 
+class TestTableRowTaskCellOverrides(unittest.TestCase):
+    """location:/budget: tokens in the Task cell of the default outline table."""
+
+    WORK_MD = """\
+# Work Loop
+
+## Active Items
+
+| Task / Conversation | Status | Last Updated | Log | ID |
+|---|:---:|:---:|:---:|---|
+| [Remote task](ITEM-001/CONVERSATION.md) · location: user@host · budget: $5 | ready | 2026-08-03 |  | ITEM-001 |
+| [Budget only](ITEM-002/CONVERSATION.md) · budget: 2.5<br>[Report](ITEM-002/context/r.md) | needs-review | 2026-08-02 |  | ITEM-002 |
+| [Plain task](ITEM-003/CONVERSATION.md) | ready | 2026-08-01 |  | ITEM-003 |
+
+## Done
+
+| Task / Conversation | Last Updated | Log | ID |
+|---|:---:|:---:|---|
+"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.work_dir = Path(self.tmp)
+        self.work_file = self.work_dir / "WORK-NEW.md"
+        self.work_file.write_text(self.WORK_MD)
+        (self.work_dir / "LOOP-PROMPT.md").write_text("Do the work.\n")
+        cfg = {"work_dir": self.work_dir, "work_file": "WORK-NEW.md", "harness": {"type": "claude", "max_budget_usd": 10.00}}
+        self.wl = WorkLoop(cfg)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _row(self, item_id: str) -> str:
+        return next(l for l in self.work_file.read_text().splitlines() if l.endswith(f"| {item_id} |"))
+
+    def test_tokens_parsed_from_task_cell(self):
+        self.assertEqual(self.wl.get_col("ITEM-001", COL_LOCATION), "user@host")
+        self.assertEqual(self.wl.get_item_budget("ITEM-001"), 5.0)
+        self.assertEqual(self.wl.get_col("ITEM-002", COL_LOCATION), "local")
+        self.assertEqual(self.wl.get_item_budget("ITEM-002"), 2.5)
+
+    def test_rows_without_tokens_use_defaults(self):
+        self.assertEqual(self.wl.get_col("ITEM-003", COL_LOCATION), "local")
+        self.assertEqual(self.wl.get_col("ITEM-003", COL_BUDGET), "$10.0")
+
+    def test_active_rows_report_remote_location(self):
+        rows = {item_id: loc for item_id, _status, loc in self.wl._active_rows()}
+        self.assertEqual(rows, {"ITEM-001": "user@host", "ITEM-002": "local", "ITEM-003": "local"})
+
+    def test_tokens_hidden_from_title(self):
+        self.assertEqual(self.wl.get_item_title("ITEM-001"), "Remote task")
+        self.assertEqual(
+            self.wl.get_col("ITEM-002", COL_TITLE),
+            "[Budget only](ITEM-002/CONVERSATION.md)<br>[Report](ITEM-002/context/r.md)",
+        )
+
+    def test_budget_label_updates_existing_token(self):
+        self.wl.update_col("ITEM-001", COL_BUDGET, "$5.0 - EXCEEDED")
+        self.assertIn("· location: user@host · budget: $5.0 - EXCEEDED |", self._row("ITEM-001"))
+        self.assertEqual(self.wl.get_col("ITEM-001", COL_BUDGET), "$5.0 - EXCEEDED")
+        self.assertEqual(self.wl.get_item_budget("ITEM-001"), 5.0)
+        self.wl.update_col("ITEM-001", COL_BUDGET, "$5.0")
+        self.assertIn("· budget: $5.0 |", self._row("ITEM-001"))
+
+    def test_budget_label_added_before_child_links(self):
+        self.wl.update_col("ITEM-002", COL_BUDGET, "$2.5 - FAILED")
+        self.assertIn(
+            "| [Budget only](ITEM-002/CONVERSATION.md) · budget: $2.5 - FAILED<br>[Report](ITEM-002/context/r.md) |",
+            self._row("ITEM-002"),
+        )
+
+    def test_default_budget_not_added_to_plain_row(self):
+        self.wl.update_col("ITEM-003", COL_BUDGET, "$10.0")
+        self.assertIn("| [Plain task](ITEM-003/CONVERSATION.md) | ready |", self._row("ITEM-003"))
+
+    def test_failure_label_added_to_plain_row(self):
+        self.wl.update_col("ITEM-003", COL_BUDGET, "$10.0 - EXCEEDED")
+        self.assertIn("| [Plain task](ITEM-003/CONVERSATION.md) · budget: $10.0 - EXCEEDED |", self._row("ITEM-003"))
+        self.assertEqual(self.wl.get_item_budget("ITEM-003"), 10.0)
+
+    def test_location_update(self):
+        self.wl.update_col("ITEM-003", COL_LOCATION, "local")
+        self.assertNotIn("location:", self._row("ITEM-003"))
+        self.wl.update_col("ITEM-001", COL_LOCATION, "other@box")
+        self.assertEqual(self.wl.get_col("ITEM-001", COL_LOCATION), "other@box")
+
+    def test_process_local_failure_writes_budget_label(self):
+        from unittest.mock import patch
+        with patch.object(WorkLoop, "_run_harness", return_value=1), \
+             patch.object(WorkLoop, "_classify_failure", return_value="budget"):
+            self.wl.process_local("ITEM-003", 10.0)
+        self.assertEqual(self.wl.get_col("ITEM-003", COL_STATUS), "needs-review")
+        self.assertEqual(self.wl.get_col("ITEM-003", COL_BUDGET), "$10.0 - EXCEEDED")
+
+    def test_title_update_preserves_tokens_and_child_links(self):
+        self.wl.update_col("ITEM-002", COL_TITLE, "[Renamed](ITEM-002/CONVERSATION.md)")
+        self.assertIn(
+            "| [Renamed](ITEM-002/CONVERSATION.md) · budget: 2.5<br>[Report](ITEM-002/context/r.md) |",
+            self._row("ITEM-002"),
+        )
+
+    def test_full_title_update_replaces_child_links_idempotently(self):
+        desired = "[Budget only](ITEM-002/CONVERSATION.md)<br>[Report](ITEM-002/context/r.md)<br>[New](ITEM-002/context/n.md)"
+        for _ in range(2):
+            self.wl.update_col("ITEM-002", COL_TITLE, desired)
+        self.assertEqual(self.wl.get_col("ITEM-002", COL_TITLE), desired)
+        self.assertEqual(self._row("ITEM-002").count("[New]"), 1)
+        self.assertEqual(self.wl.get_item_budget("ITEM-002"), 2.5)
+
+    def test_status_update_and_sort_keep_tokens(self):
+        self.wl.update_col("ITEM-003", COL_LAST_UPDATED, "2026-08-10")
+        self.wl.update_col("ITEM-001", COL_STATUS, "in-progress")
+        self.assertEqual(self.wl.get_col("ITEM-001", COL_LOCATION), "user@host")
+        self.assertEqual(self.wl.get_item_budget("ITEM-001"), 5.0)
+
+    def test_done_row_drops_tokens(self):
+        self.wl.update_col("ITEM-001", COL_STATUS, "done")
+        text = self.work_file.read_text()
+        self.assertIn("| [Remote task](ITEM-001/CONVERSATION.md) | 2026-08-03 |", text)
+        self.assertNotIn("user@host", text)
+
+
 class TestInNoteActionCenter(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()

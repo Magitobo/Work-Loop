@@ -4,6 +4,41 @@ from datetime import datetime
 from .constants import *
 from .utils import _ts, _is_table_separator, _is_table_header
 
+# Optional per-item overrides written inside a table row's Task cell, after the
+# CONVERSATION link and before any `<br>` child links:
+#   | [Title](ID/CONVERSATION.md) · location: user@host · budget: $5 | ready | ... |
+_TASK_TOKEN_RES = {
+    "location": re.compile(r"\s*·?\s*location:\s*`?([^\s·|`<]+)`?", re.IGNORECASE),
+    "budget": re.compile(r"\s*·?\s*budget:\s*`?(\$?[0-9.]+(?:\s*-\s*[A-Za-z]+)?)`?", re.IGNORECASE),
+}
+
+
+def _split_task_cell(cell: str) -> tuple[str, str]:
+    """Split a Task cell into its head (link + tokens) and the `<br>...` child-link tail."""
+    head, sep, tail = cell.partition("<br>")
+    return head, sep + tail
+
+
+def _task_tokens(head: str) -> dict[str, str]:
+    """Return the location/budget tokens present in a Task cell head."""
+    tokens = {}
+    for key, rx in _TASK_TOKEN_RES.items():
+        m = rx.search(head)
+        if m:
+            tokens[key] = m.group(1).strip()
+    return tokens
+
+
+def _strip_task_tokens(head: str) -> str:
+    for rx in _TASK_TOKEN_RES.values():
+        head = rx.sub("", head)
+    return head.strip().strip("·").strip()
+
+
+def _with_task_tokens(head: str, tokens: dict[str, str]) -> str:
+    suffix = "".join(f" · {key}: {tokens[key]}" for key in _TASK_TOKEN_RES if key in tokens)
+    return _strip_task_tokens(head) + suffix
+
 
 class OutlineMixin:
     def _is_outline_format(self) -> bool:
@@ -95,17 +130,24 @@ class OutlineMixin:
                         m_stat = re.search(r'`?([a-z-]+)`?', status_cell, re.IGNORECASE)
                         status = m_stat.group(1).strip() if m_stat else "ready"
 
+                        task_head, task_tail = _split_task_cell(task_cell)
+                        tokens = _task_tokens(task_head)
+                        budget = tokens.get("budget", f"${self.max_budget}")
+                        if not budget.startswith("$"):
+                            budget = f"${budget}"
+
                         m_thread = re.search(r'(\[[^\]]+\]\([^)]*CONVERSATION\.md\))', task_cell)
-                        thread = m_thread.group(1).strip() if m_thread else task_cell
+                        thread = m_thread.group(1).strip() if m_thread else _strip_task_tokens(task_head)
 
                         items[item_id] = {
                             "id": item_id,
                             "section": "active",
                             "status": status,
-                            "budget": f"${self.max_budget}",
-                            "location": "local",
+                            "budget": budget,
+                            "location": tokens.get("location", "local"),
                             "last_updated": last_updated,
                             "thread": thread,
+                            "task": _strip_task_tokens(task_head) + task_tail,
                             "log": log_cell,
                             "start": start_idx,
                             "end": end_idx,
@@ -375,6 +417,8 @@ class OutlineMixin:
             if col_idx == COL_ID:
                 return item["id"]
             elif col_idx == COL_TITLE:
+                if item.get("format") == "table" and item["task"]:
+                    return item["task"]
                 return item["thread"] or f"[{item_id}]({item_id}/CONVERSATION.md)"
             elif col_idx == COL_LOCATION:
                 return item["location"]
@@ -435,11 +479,19 @@ class OutlineMixin:
                         cells.append("")
                     cells[log_idx] = value
             elif col_idx == COL_TITLE and task_idx < len(cells):
-                if "<br>" in cells[task_idx]:
-                    parts = cells[task_idx].split("<br>", 1)
-                    cells[task_idx] = value + "<br>" + parts[1]
-                else:
-                    cells[task_idx] = value
+                # A value containing <br> is a full cell (link + child links); otherwise
+                # it replaces only the link and keeps the existing child links.
+                head, tail = _split_task_cell(cells[task_idx])
+                new_head, new_tail = _split_task_cell(value) if "<br>" in value else (value, tail)
+                cells[task_idx] = _with_task_tokens(new_head, _task_tokens(head)) + new_tail
+            elif col_idx in (COL_BUDGET, COL_LOCATION) and task_idx < len(cells):
+                key, default = ("budget", f"${self.max_budget}") if col_idx == COL_BUDGET else ("location", "local")
+                head, tail = _split_task_cell(cells[task_idx])
+                tokens = _task_tokens(head)
+                # Only add a token when it carries information; update one the user already wrote.
+                if key in tokens or value != default:
+                    tokens[key] = value
+                    cells[task_idx] = _with_task_tokens(head, tokens) + tail
             elif col_idx == COL_ID and id_idx >= 0 and id_idx < len(cells):
                 cells[id_idx] = value
 
