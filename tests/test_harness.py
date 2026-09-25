@@ -636,6 +636,30 @@ class TestAgentSync(unittest.TestCase):
             # Existing node_modules in workspace should not be destroyed or crash
             self.assertTrue((target_ws / ".opencode" / "node_modules" / "existing-pkg" / "lib.js").exists())
 
+    def test_sync_skips_claude_code_local_state(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            fake_script_dir = tmp / "repo"
+            fake_agent_dir = fake_script_dir / ".claude"
+            (fake_agent_dir / "agents").mkdir(parents=True)
+            (fake_agent_dir / "agents" / "critic.md").write_text("prompt")
+            (fake_agent_dir / "settings.json").write_text("{}")
+            (fake_agent_dir / "settings.local.json").write_text("{}")
+            (fake_agent_dir / "worktrees" / "x").mkdir(parents=True)
+            # Unresolvable placeholder: rendering it would raise ValueError
+            (fake_agent_dir / "worktrees" / "x" / "file.py").write_text("s = '{{bogus}}'")
+
+            target_ws = tmp / "workspace"
+            target_ws.mkdir()
+            wl = WorkLoop({"work_dir": target_ws, "harness": {"type": "claude"}}, script_dir=fake_script_dir)
+            wl._sync_agent_dir(str(target_ws))
+
+            dst = target_ws / ".claude"
+            self.assertTrue((dst / "agents" / "critic.md").exists())
+            self.assertTrue((dst / "settings.json").exists())
+            self.assertFalse((dst / "worktrees").exists())
+            self.assertFalse((dst / "settings.local.json").exists())
+
 
 class TestPromptLoading(unittest.TestCase):
     """Verify correct prompt file is loaded for each mode."""

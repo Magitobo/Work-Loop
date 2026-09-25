@@ -465,14 +465,18 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
             return
 
         ignore_names = {"node_modules", ".DS_Store", "__pycache__", ".git"}
+        # Claude Code local state in the scripts repo's agent dir (worktree
+        # checkouts, per-user settings, session data) is not agent config.
+        top_level_ignore = ignore_names | {"worktrees", "settings.local.json", "projects"}
 
-        def _sync_tree(s: Path, d: Path) -> None:
+        def _sync_tree(s: Path, d: Path, top: bool = False) -> None:
+            skip = top_level_ignore if top else ignore_names
             d.mkdir(parents=True, exist_ok=True)
-            src_entries = {p.name: p for p in s.iterdir() if p.name not in ignore_names}
+            src_entries = {p.name: p for p in s.iterdir() if p.name not in skip}
 
             if d.exists():
                 for p in d.iterdir():
-                    if p.name in ignore_names:
+                    if p.name in skip:
                         continue
                     if p.name not in src_entries:
                         try:
@@ -499,7 +503,7 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
                     except (OSError, UnicodeDecodeError):
                         shutil.copy2(src_path, dst_path)
 
-        _sync_tree(src, dst)
+        _sync_tree(src, dst, top=True)
 
     def _run_harness(self, prompt: str, log_file: Path, budget: float, cwd: str | None = None, item_id: str | None = None) -> int:
         """Delegate to the configured harness."""
