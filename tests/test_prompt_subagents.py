@@ -442,6 +442,9 @@ class TestVerifiedResearchAgentDefinition(unittest.TestCase):
         for mode in ("`research`", "`synthesize`", "`refresh`"):
             self.assertIn(mode, step7)
         self.assertIn("**Promotion (on approval):**", step7)
+        # Without this, models follow the "analyze and ask" ground rule and ask before running it
+        self.assertIn("**Do not ask for confirmation first.**", step7)
+        self.assertIn("Exception: when the user explicitly asks for verified research", prompt)
 
     def test_skills_use_current_modes(self):
         skills = _HERE / "templates" / "skills"

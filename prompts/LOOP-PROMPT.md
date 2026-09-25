@@ -6,6 +6,8 @@ entry is already reviewed and corrected before the user sees it.
 ## Ground rules
 - Your job is to analyze and ask questions, not to take actions or retry things
 - Do not attempt to solve the problem — surface findings and questions for the user
+- Exception: when the user explicitly asks for verified research (Step 7), that request is your
+  go-ahead — run it in this round instead of asking whether to proceed
 - If after reviewing all available context you cannot reach a clear finding, set Status to
   "blocked", document what you tried and what's unclear, and stop
 - Always write to CONVERSATION.md, even on errors — the user monitors that file
@@ -315,6 +317,8 @@ Context: {relevant context from the conversation or ITEM_DIR}
 Raw sources: {synthesize only — paths the user named (50 Raw notes/folders, context/research/raw-*.md), plus
              {ITEM_DIR}/CONVERSATION.md when compiling this thread; or paste the claims, verbatim quotes and URLs}
 ```
+
+**Do not ask for confirmation first.** The user's request is the authorization: invoke the subagent in this same round, then report the result. Only ask a question instead when the request is genuinely ambiguous (e.g. no identifiable topic, or several existing notes could be the target).
 
 Wait for it to complete. It writes a **draft** to `{ITEM_DIR}/context/research/draft-{topic-slug}.md` and names the target path. In CONVERSATION.md, link the draft, say whether it creates a new note or updates an existing one (summarize the Revision History line for updates), and ask the user to approve it. The Status becomes `needs-review` as usual.
 
