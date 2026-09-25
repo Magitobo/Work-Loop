@@ -2,14 +2,28 @@
 
 ## Overview
 
-Work-Loop is an automated harness that runs AI agents (Claude or OpenCode) on work items one at a time. Each item gets a fresh context, and items can run locally or be dispatched to remote hosts over SSH. The loop also supports **script items** — automated command dispatch to one or more machines with cron scheduling, multi-machine polling, and fan-in aggregation — **research items** — automated web research that fetches sources, compares against existing notes, and writes updated notes with per-run summaries — **child agents** — parent items can spawn and manage sub-agents (research and task) via a propose/approve workflow for focused, parallel work — and **verified research** — de novo web research with multi-angle search, claim extraction with confidence ratings, contradiction resolution, and a human gate (available as a sub-agent invoked by the LOOP-PROMPT agent).
+Work-Loop watches a Markdown dashboard (`WORK.md`) in your Obsidian vault and runs an AI agent (Claude or OpenCode) whenever an item asks for work. Each run gets a fresh context and writes its results back into the vault. Runs happen locally or on a remote host over SSH.
+
+| You want to… | Use a… | Configured in |
+|---|---|---|
+| Work through a problem with an agent, and optionally have it write code | **Thread** | `CONVERSATION.md` |
+| Keep a note current from a fixed list of web sources | **Routine: track sources** | `RUNS.md` with `type: research` |
+| Periodically scan local folders and get suggested actions | **Routine: scan files** (attached only) | `RUNS.md` with `type: task` |
+| Run a shell command on one or more machines, with optional AI summary | **Routine: run command** | `RUNS.md` with `command:` |
+| Get a one-off, fully sourced answer saved as a vetted note | **Verified research** (ask inside a thread) | output in `03 Verified Research/` |
+
+A routine is either **standalone** (its own row in `WORK.md`) or **attached** to a thread. The code calls attached routines *child agents*.
+
+**New here? Start with the [Tutorial](docs/TUTORIAL.md).** It walks through each of these with examples. This guide is the reference.
 
 ## Quick Start
 
 ```bash
 # 1. Configure your setup
-cp config-example.json config.json   # if available, or edit config.json
-# 2. Start the loop
+cp config-example.json config.json   # then edit work_dir and harness
+# 2. Scaffold the vault (optional; the loop also does this on startup)
+python3 run-loop.py --init-vault "/path/to/Vault"
+# 3. Start the loop
 python3 run-loop.py
 ```
 
@@ -48,51 +62,72 @@ Work-Loop/                    ← scripts repo
 ├── run-loop.py               ← executable shim
 ├── workloop/                 ← core loop package
 ├── tests/                    ← tests
+├── docs/TUTORIAL.md          ← step-by-step introduction
 ├── config.json               ← harness + directory settings
-├── prompts/                  ← prompt templates directory
-│   ├── BASE-PROMPT.md        ← base execution rules (reasoning budget & fast-path)
-│   ├── LOOP-PROMPT.md        ← prompt for analyze/ready/resolved items
-│   ├── IMPL-PROMPT.md        ← prompt for implement items
-│   ├── RESOLVE-PROMPT.md     ← prompt for resolved items (summary)
-│   ├── UPDATE-RESEARCH-PROMPT.md ← prompt for research items (parent + child modes)
-│   └── TASK-PROMPT.md        ← prompt for child task agents
+├── prompts/                  ← prompt templates (see Prompt Files)
 ├── templates/                ← vault scaffolding templates (AGENTS.md, WORK.md, Verified Research README)
-├── .opencode/                ← OpenCode agent config + sub-agent definitions
-│   └── agents/               ← sub-agent definitions (verified-research.md, research-worker.md, etc.)
+├── .opencode/ / .claude/     ← agent config + sub-agent definitions
 └── <work_dir>/               ← work items (path configured in config.json)
-    ├── WORK.md               ← main work item table
-    └── <item-id>/            ← one folder per item
-        ├── CONVERSATION.md   ← thread between user and agent
+    ├── WORK.md               ← the dashboard
+    └── <item-id>/            ← one folder per thread or standalone routine
+        ├── CONVERSATION.md   ← thread between you and the agent
+        ├── RUNS.md           ← (standalone routines) config + run history
+        ├── runs/             ← (standalone routines) per-run output
         ├── _logs/            ← harness logs
         ├── background.md     ← (optional) internal context
-        ├── WORK-CHILDREN.md  ← (optional) child agent registry
-        ├── context/          ← (optional) shared context notes (child reports & research staging live here)
+        ├── context/          ← (optional) shared notes: attached-routine reports, research staging
         │   └── research/     ← (optional) in-flight raw research extracts (raw-*.md)
-        └── children/         ← (optional) child agent directories
-            └── {name}/      ← one folder per child agent
-                ├── RUNS.md ← child config + run history
-                └── runs/  ← per-run summaries (research.md / task.md)
+        ├── WORK-CHILDREN.md  ← (optional) list of attached routines
+        └── children/         ← (optional) one folder per attached routine
+            └── {name}/
+                ├── RUNS.md   ← config + run history
+                └── runs/     ← per-run summaries (research.md / task.md)
 ```
 
-## WORK.md Table
+## The Dashboard: WORK.md
 
-The work item table is the source of truth. Each row has these columns:
+`WORK.md` is the source of truth for status. The scaffolded template uses the outline format:
 
-| Column | Description |
+```markdown
+## Add New Item
+- [ ] Describe what you want and tick the box
+
+## Active Items
+| Task / Conversation | Status | Last Updated | Log | ID |
+
+## Done
+| Task / Conversation | Last Updated | Log | ID |
+```
+
+| Section / column | Description |
 |---|---|
-| ID | Folder name under `Work-Loop-Items/`; also the Jira key if it looks like one |
-| Title | Item description (first link to `CONVERSATION.md`; child report links appended after) |
-| Location | `local` or `user@hostname` for remote dispatch |
-| Status | Controls loop behavior (see state machine below) |
-| Last Updated | Date of last activity |
-| Budget | Per-item override (e.g. `$5.0`); defaults to `max_budget_usd` |
-| Log | Link to the harness log file |
+| **Add New Item** | Tick a bullet to start a new thread. The ID is the first four words, slugified; use `- [x] **MY-ID** text` to choose it |
+| Task / Conversation | Link to `CONVERSATION.md` (or `RUNS.md`). The loop appends one `<br>`-separated report link per attached routine |
+| Status | Controls what the loop does (see the state tables below) |
+| Last Updated / Log | Maintained by the loop |
+| ID | Folder name under `work_dir`; also the Jira key if it looks like one |
 
-The loop also maintains a `## Needs Attention` bullet section near the top of `WORK.md`
-(marker-fenced, omitted when empty) listing items and children needing review. It uses bullets
-rather than table rows so it never interferes with table parsing.
+**Location and budget.** A row runs locally with `max_budget_usd` unless its Task / Conversation cell says otherwise. To set a remote host or a per-item budget, add `location:` and/or `budget:` after the link:
 
-## Conversation Items — State Machine
+```markdown
+| [Title](ITEM-ID/CONVERSATION.md) · location: user@host · budget: $5 | ready | … | … | ITEM-ID |
+```
+
+Both tokens are optional and are dropped when the row moves to Done. If a run fails, the loop records it in the same cell as `budget: $N - EXCEEDED` or `budget: $N - FAILED`. Bullet rows in Active Items accept the same tokens:
+
+```markdown
+- [ ] [Title](ITEM-ID/CONVERSATION.md) · status: ready · location: user@host · budget: $5
+```
+
+The legacy single-table format (`| ID | Title | Location | Status | Last Updated | Budget | Log |`, with `new` as the status for new rows) is still supported.
+
+**Needs Attention.** The loop maintains a marker-fenced `## Needs Attention` bullet list near the top. It is omitted when empty and lists threads in `needs-review`, attached routines in `needs-review`, and attached routines whose report is flagged with an attention marker. It uses bullets, not a table, so it never interferes with table parsing.
+
+## Threads
+
+A thread is a conversation between you and the agent in `<ID>/CONVERSATION.md`. It is seeded from your request, and the agent adds each reply at the top (newest first). Each thread starts with an **Action Center** callout whose checkboxes set the status for you: *Continue Analyze* (`ready`), *Run Implement* (`implement`), *Mark Resolved* (`resolved`) and *Abort* (`abort`).
+
+### Thread States
 
 ```
 new → ready/analyze/implement/resolved → in-progress → needs-review
@@ -103,26 +138,35 @@ new → ready/analyze/implement/resolved → in-progress → needs-review
 
 | Status | Meaning |
 |---|---|
-| `new` | Loop creates folder + `CONVERSATION.md` from Title, then sets `ready` |
-| `ready` / `analyze` | Triggers LOOP-PROMPT.md run (investigation mode) |
-| `implement` | Triggers IMPL-PROMPT.md run; reads `work_dir:` from CONVERSATION.md |
-| `resolved` | Triggers RESOLVE-PROMPT.md run; moves row to Done section on success |
+| `new` | (Legacy table) Loop creates folder + `CONVERSATION.md` from Title, then sets `ready` |
+| `ready` / `analyze` | Analysis round: `LOOP-PROMPT.md` (investigate, internal critic review, ask questions) |
+| `implement` | Implementation round: `IMPL-PROMPT.md`; runs in the `work_dir:` given in CONVERSATION.md |
+| `resolved` | `RESOLVE-PROMPT.md` writes a Problem/Resolution summary; row moves to Done on success |
 | `in-progress` | Set by loop before harness starts; prevents double-dispatch |
-| `needs-review` | Harness finished (or failed); human review needed |
-| `abort` | Set by human to cancel: skips un-started items; kills running harness |
-| `done` | Human marks complete; loop moves row to Done section |
+| `needs-review` | Harness finished (or failed); your turn |
+| `blocked` | Agent could not proceed; reason is in the thread |
+| `abort` | Set by you to cancel: skips un-started items; kills running harness |
+| `done` | You mark complete; loop moves row to Done section |
 
-## Child Agents
+## Routines
 
-Parent items can spawn and manage child agents — sub-agents that run focused cycles and write results to the parent's shared `context/` directory. Children are managed through a **propose/approve** workflow: the parent agent proposes structural changes, the user approves, and the loop executes.
+A routine is a repeatable job configured by a `## Config` block in `RUNS.md`. Everything after `## Prompt` (until the next `##` header or EOF) is passed to the agent verbatim as scope and guidance. The optional `schedule:` field takes a cron expression.
 
-Two child types are available:
-- **`type: research`** — fetches web sources, compares against a note, writes updates
-- **`type: task`** — scans local files/directories, proposes actions (moves, renames), does NOT execute
+| Kind | Config | Prompt | Standalone | Attached |
+|---|---|---|---|---|
+| Track sources | `type: research` | `UPDATE-RESEARCH-PROMPT.md` | yes | yes |
+| Scan files | `type: task` | `TASK-PROMPT.md` | — | yes |
+| Run command | `command:` | (none; optional `analysis_prompt:`) | yes | — |
 
-### Registry: WORK-CHILDREN.md
+### Attached Routines (Child Agents)
 
-Child agents are tracked in `WORK-CHILDREN.md` within the parent item folder. The parent agent creates and maintains this file; the loop manages status transitions.
+A thread's agent can set up routines that run in the background and write results into the thread's `context/` directory. It uses a **propose/approve** workflow: the agent proposes a change, you approve it in the thread, and the agent makes it.
+
+**High-risk (needs your approval):** create, update (sources, note_path, title, schedule type) or delete a routine. The agent writes a proposal to `CONVERSATION.md` containing the `RUNS.md` config and the `WORK-CHILDREN.md` row.
+
+**Low-risk (the agent does these directly and records them in the thread):** pause, resume, or re-run a finished one-off routine.
+
+#### Registry: WORK-CHILDREN.md
 
 ```markdown
 | ID | Title | Status | Last Updated | Budget | Log |
@@ -133,24 +177,22 @@ Child agents are tracked in `WORK-CHILDREN.md` within the parent item folder. Th
 
 | Column | Description |
 |---|---|
-| ID | Child folder name (e.g. `areas`, `rules`) |
-| Title | Markdown link to child's `RUNS.md` |
-| Status | Child status (see state machine below) |
-| Budget | Per-child budget override (e.g. `$3.0`); empty = global default |
+| ID | Folder name under `children/` |
+| Title | Markdown link to the routine's `RUNS.md` |
+| Status | See states below |
+| Budget | Per-routine budget override (e.g. `$3.0`); empty = global default |
 
-### Child Agent States
+#### Attached Routine States
 
 | Status | Meaning |
 |---|---|
 | `ready` | Ready to run (one-off or cron-promoted) |
 | `scheduled` | Has a cron schedule; waiting for cron to fire |
 | `running` | Currently being processed by the loop |
-| `done` | One-off complete (parent can re-promote to `ready` to re-run) |
-| `needs-review` | Latest run failed or needs user review |
-| `paused` | Manually paused by parent agent |
-| `abort` | User requested cancellation |
-
-### State Transitions
+| `done` | One-off complete (set to `ready` to re-run) |
+| `needs-review` | Latest run failed or needs your review |
+| `paused` | Paused by the thread's agent |
+| `abort` | You requested cancellation |
 
 ```
 ready ──(loop processes)──> running ──(completes)──┬── scheduled (if cron)
@@ -158,29 +200,11 @@ ready ──(loop processes)──> running ──(completes)──┬── sch
                             └──(fails)──> needs-review
 
 scheduled ──(cron fires)──> ready
-paused / done ──(parent)──> ready     ← direct, no approval needed
-running ──(user abort)──> abort       ← loop kills harness
+paused / done ──(agent)──> ready     ← direct, no approval needed
+running ──(user abort)──> abort      ← loop kills harness
 ```
 
-### Managing Children (Propose/Approve Workflow)
-
-The parent agent manages children through two tiers of actions:
-
-**High-risk (requires user approval):**
-- Create a new child agent
-- Update a child's config (sources, note_path, title, schedule type)
-- Delete a child agent
-
-The parent writes a proposal to `CONVERSATION.md` with the `RUNS.md` config to create/modify and the `WORK-CHILDREN.md` row to add. After user approval, the parent executes.
-
-**Low-risk (direct — no approval needed):**
-- Pause a child agent
-- Resume a child agent
-- Re-run a completed one-off child
-
-The parent updates the child's status in `WORK-CHILDREN.md` directly and logs the action in `CONVERSATION.md`.
-
-### Research Child Config
+#### Attached Track-Sources Config
 
 ```markdown
 ## Config
@@ -196,7 +220,7 @@ schedule: 0 */6 * * *
 Evaluate walkability for top 5 KL neighborhoods.
 ```
 
-### Task Child Config
+#### Attached Scan-Files Config
 
 ```markdown
 ## Config
@@ -213,77 +237,22 @@ Scan the 00 Inbox folder. Suggest which folder each file should move to:
 - Notes → 03-Notes
 ```
 
-- `parent: {ITEM_ID}` — required; links the child to its parent for discovery and orphan detection
-- `note_path` — relative to the parent's `children/` directory; use `../context/...` to write to the parent's shared context
-- Research children write results to `runs/{run_id}/research.md`; task children to `runs/{run_id}/task.md`
-- Children must have unique `note_path` values; the loop enforces this at process time
+- `parent: {ITEM_ID}` is required. It links the routine to its thread and is used for orphan detection.
+- `note_path` is the living note the routine keeps current. It is relative to the thread's `children/` directory, so use `../context/...` to write into the thread's shared context. Each attached routine needs its own `note_path`, and the loop checks this before each run.
+- Track-sources runs write `runs/{run_id}/research.md`; scan-files runs write `runs/{run_id}/task.md`.
+- Scan-files routines only propose actions, unless the `## Prompt` explicitly authorizes executing some of them.
 
-### WORK.md Dashboard (Report Links + Needs Attention)
+#### Report Links and the Attention Marker
 
-The loop maintains two child-facing surfaces in top-level `WORK.md` each iteration (idempotent,
-write-only-on-change, so idle cycles cause no churn):
+The loop keeps two things in `WORK.md` up to date on every pass. Each pass is idempotent and only writes when something changed.
 
-- **Report links** — each parent with children gets one `<br>`-separated link per child report
-  in its Title cell, after the CONVERSATION link. The link points at the child's `note_path`
-  (the always-current note), so a child's report is one click away:
-  `[Parent title]({parent}/CONVERSATION.md)<br>[{child title}]({parent}/context/{note}.md)`.
-- **`## Needs Attention` section** — a bullet list near the top of `WORK.md` (omitted when empty)
-  listing what needs review: top-level items in `needs-review`, children in `needs-review`, and
-  children whose report is flagged with an attention marker. Each entry links straight to the
-  report. It is a bullet list (not a table), so it never disturbs the loop's table parsing.
+- **Report links:** each thread with attached routines gets one `<br>`-separated link per routine in its Title cell, after the CONVERSATION link, pointing at the routine's `note_path`:
+  `[Thread title]({parent}/CONVERSATION.md)<br>[{routine title}]({parent}/context/{note}.md)`.
+- **Attention marker:** a routine writes an HTML comment as the first line of its note: `<!-- attention: yes — {one-line reason} -->` when your decision is needed, else `<!-- attention: no -->`. Obsidian doesn't display it, but the loop reads it to fill `## Needs Attention`.
 
-**Attention marker:** a child writes a single HTML comment as the first line of its `note_path`
-note — `<!-- attention: yes — {one-line reason} -->` when the user's decision is needed, else
-`<!-- attention: no -->`. It is invisible in Obsidian but read by the loop to drive the section.
+### Standalone Track-Sources Routine
 
-## Script Items
-
-Script items run arbitrary commands on remote machines instead of invoking an AI harness. They use `RUNS.md` instead of `CONVERSATION.md`.
-
-### Config Block
-
-Add a `## Config` section to `RUNS.md`:
-
-```markdown
-## Config
-command: python3 script.py
-params: --input data.csv
-schedule: 0 2 * * *        # optional cron expression
-location: user@host         # or use 'locations:' for multi-machine
-locations:
-  linux:user@host1
-  linux:user@host2
-heartbeat_file: output.txt  # optional: file to monitor for activity
-timeout: 4                  # optional: minutes before timing out (default: 4)
-aggregation_script: /path/to/aggregate.py  # optional: run after all machines complete
-analysis_prompt: Summarize the results    # optional: AI prompt to analyze aggregated output
-```
-
-### Script Item States
-
-| Status | Meaning |
-|---|---|
-| `scheduled` | Has a cron schedule; promoted to `ready` when cron fires |
-| `ready` | Dispatched to target machine(s) |
-| `running` | Dispatched and polling in progress |
-| `success` | All machines completed, fan-in succeeded |
-| `needs-review` | Aggregation/analysis failed or some machines timed out |
-
-### Fan-in
-
-After all machines complete, the loop optionally:
-1. Runs an **aggregation script** (Python, receives run directory as argument)
-2. Runs an **AI analysis prompt** (via the configured harness)
-
-If either fails, the run status becomes `needs-review`.
-
-## Research Items
-
-Research items run an AI agent that fetches web sources, compares findings against an existing Obsidian note, and writes an updated version. They use `RUNS.md` for configuration (like script items) but the agent does the work via tool use (web fetch, file I/O) rather than dispatching shell commands.
-
-### Config Block
-
-Add a `## Config` section to `RUNS.md`:
+Create `<ID>/RUNS.md` and add an Active Items row with status `research`. The agent fetches the sources, compares them with the note, writes the updated note, and records a per-run summary.
 
 ```markdown
 ## Config
@@ -311,33 +280,63 @@ Key papers to watch: [[AI Security/Papers]]
 | `schedule` | No | Cron expression; if present, status starts as `scheduled` |
 | `timeout` | No | Minutes before agent times out (default: 4) |
 
-Everything after `## Prompt` (until the next `##` header or EOF) is injected verbatim into the agent prompt as scope and guidance.
-
-### Research Item States
-
 | Status | Meaning |
 |---|---|
-| `scheduled` | Has a cron schedule; promoted to `ready` when cron fires |
-| `ready` | Agent runs: fetches sources, updates note, writes summary |
+| `research` | Run one track-sources cycle now |
+| `scheduled` | Has a cron schedule; promoted to `ready` when cron fires (see known issue below) |
 | `in-progress` | Agent is running |
-| `needs-review` | Agent finished; human must approve before next cycle |
-| `done` | No schedule configured and agent finished successfully |
+| `needs-review` | Run failed; your review needed |
+| `done` | No schedule configured and the run succeeded |
 
-On success with a schedule, the status returns to `scheduled`. The human reviews during `needs-review` and sets back to `ready` to trigger the next cycle.
-
-### Run History
-
-Each research cycle appends a row to the table in `RUNS.md`:
+On success, the status becomes `scheduled` if the config has a schedule, otherwise `done`. Each run appends a row to the run history in `RUNS.md`, with details in `runs/{run_id}/research.md`:
 
 | ID | Summary | Status | Last Updated |
 |---|---|---|---|
 | 20260717-001 | [Added 3 new papers on model vulnerabilities](runs/20260717-001/) | success | 2026-07-17 |
 
-Per-run details are written to `runs/{run_id}/research.md` with changes, sources, and notes.
+> **Known issue:** cron promotion (and first-time initialization) sets the status to `ready`, which currently runs `LOOP-PROMPT.md` instead of `UPDATE-RESEARCH-PROMPT.md`. For scheduled source tracking, use an attached routine, or trigger standalone runs by hand with `research`.
+
+### Run-Command Routine (Script Item)
+
+Runs arbitrary commands on remote machines. There is no AI step unless you configure `analysis_prompt:`.
+
+```markdown
+## Config
+command: python3 script.py
+params: --input data.csv
+schedule: 0 2 * * *        # optional cron expression
+location: user@host         # or use 'locations:' for multi-machine
+locations:
+  linux:user@host1
+  linux:user@host2
+heartbeat_file: output.txt  # optional: file to monitor for activity
+timeout: 4                  # optional: minutes before timing out (default: 4)
+aggregation_script: /path/to/aggregate.py  # optional: run after all machines complete
+analysis_prompt: Summarize the results    # optional: AI prompt to analyze aggregated output
+```
+
+| Status | Meaning |
+|---|---|
+| `scheduled` | Has a cron schedule; promoted to `ready` when cron fires |
+| `ready` | Dispatched to target machine(s) |
+| `running` | Dispatched and polling in progress |
+| `success` | All machines completed, fan-in succeeded (returns to `scheduled` if a schedule is set) |
+| `needs-review` | Aggregation/analysis failed or some machines timed out |
+
+**Fan-in:** after all machines complete, the loop optionally runs the **aggregation script** (Python, receives the run directory as argument), then the **AI analysis prompt** via the configured harness. If either fails, the run status becomes `needs-review`.
+
+## Verified Research
+
+Verified research is an action you ask for inside a thread, not an item type. Ask in your reply, e.g. *"Do verified research on X and create a note in 03 Verified Research/"*, or *"Compile what we've found into a verified research note"*, then tick **Continue Analyze**.
+
+- **New research:** the agent splits the question into 2–4 subtopics and researches each one. Raw extracts are staged in `{ITEM_DIR}/context/research/raw-*.md`. It then writes one structured note (claims with confidence ratings, quotes, sources) and sets `needs-review` so you can check it.
+- **Compile from the thread:** builds the note from quotes and URLs already in `CONVERSATION.md`, without fetching the web again.
+
+Notes follow the rules in `03 Verified Research/README.md` (scaffolded from `templates/VERIFIED-RESEARCH-README.md`). Verified research runs only when you ask for it. For interactive sessions in the vault, the scaffold also installs two skills from `templates/skills/`: `verified-research` (new research) and `synthesize-research` (saves the chat to `50 Raw/`, then compiles a note from it). See [Under the Hood](#under-the-hood) for how it is orchestrated.
 
 ## Remote Dispatch
 
-When an item's Location is set to a remote host (e.g. `user@hostname`), the loop:
+When an item's location is a remote host (e.g. `user@hostname`), the loop:
 
 1. **Wipes** `~/Work-Loop` on the remote (cleans up previous aborted runs)
 2. **Rsyncs** the item folder, prompt files, and agent config (`.claude/` or `.opencode/`)
@@ -346,15 +345,10 @@ When an item's Location is set to a remote host (e.g. `user@hostname`), the loop
 5. **Polls** `{item_id}/.done` every 5 seconds for the exit code
 6. **Syncs back** results, updates local `WORK.md`, then wipes the remote folder
 
-### Prerequisites
+**Prerequisites:** SSH key-based authentication; the same harness CLI (Claude or OpenCode) installed on the remote. NVM is auto-loaded on remote hosts.
 
-- SSH key-based authentication must be configured on the remote host
-- The remote host needs the same harness CLI installed (Claude or OpenCode)
-- NVM is auto-loaded on remote hosts for harness availability
-
-### Key Properties
-
-- The remote folder only exists while a job is actively running — no stale state
+**Key properties:**
+- The remote folder only exists while a job is actively running, so no stale state is left behind
 - Prompt files and agent config are always synced fresh
 - If the local loop crashes mid-job, the remote agent keeps running; the next dispatch to that host wipes and starts clean
 
@@ -362,7 +356,7 @@ When an item's Location is set to a remote host (e.g. `user@hostname`), the loop
 
 When the harness exits non-zero, the loop classifies the failure:
 
-| Type | Trigger | Budget Column | Status |
+| Type | Trigger | Budget | Status |
 |---|---|---|---|
 | `budget` | Log contains "budget", "cost limit", or "exceeded" | `$N - EXCEEDED` | `needs-review` |
 | `unknown` | Other non-zero exit | `$N - FAILED` | `needs-review` |
@@ -371,10 +365,48 @@ A failure notice is prepended to `CONVERSATION.md`.
 
 ## Abort Handling
 
-- **Local**: A background thread polls the status column every 3 seconds; if set to `abort`, the harness process is terminated
+- **Local**: A background thread polls the status every 3 seconds; if set to `abort`, the harness process is terminated
 - **Remote**: The wait loop checks status before each poll; if `abort`, sends `kill` to the remote PID (from `.pid` file), syncs back partial results, and leaves status as `abort`
 
-## Running Tests
+## Reference
+
+### Prompt Files
+
+Prompt files live in `prompts/` and are chosen based on the item's status or type. `BASE-PROMPT.md` is prepended to all of them.
+
+| File | Used for | Purpose |
+|---|---|---|
+| `LOOP-PROMPT.md` | thread: `ready`, `analyze` | Investigation with internal critic review, attached-routine management, verified research on request |
+| `IMPL-PROMPT.md` | thread: `implement` | Code implementation with code review |
+| `RESOLVE-PROMPT.md` | thread: `resolved` | Problem/resolution summary |
+| `UPDATE-RESEARCH-PROMPT.md` | track sources (standalone `research` + attached `type: research`) | Fetch sources, compare against note, write updated note and summary |
+| `TASK-PROMPT.md` | scan files (attached `type: task`) | Scan local files, propose actions, write note + task summary |
+
+Each prompt receives `ITEM_ID`, `WORK_LOOP_DIR`, and `ITEM_DIR`. Track-sources runs also receive `title`, `note_path`, `sources`, `instruction`, and `BACKLINK_TARGET`. Attached routines additionally receive `PARENT_ID`, `PARENT_DIR`, and `run_id`. `UPDATE-RESEARCH-PROMPT.md` handles both standalone and attached modes; attached mode is detected by the presence of `PARENT_ID`.
+
+### Loop Execution Order
+
+Each iteration of the loop:
+
+1. Moves `done` rows to the Done section
+2. Resumes any running run-command routines (polling recovery)
+3. Recovers any stalled remote jobs (polls `.done` sentinel)
+4. Refreshes the WORK.md dashboard (report links + `## Needs Attention`)
+5. Initializes new items
+6. Promotes `scheduled` standalone routines whose cron fires now
+7. Picks up `ready`/`analyze`/`implement`/`resolved`/`research` items and processes them
+8. Processes attached routines for all threads (including `done` threads with active scheduled routines); re-scans for newly created routines after processing each thread
+
+### Vault Auto-Scaffolding
+
+Work-Loop bootstraps and syncs standard folders and agent rules in any vault it points to:
+
+- **Startup Auto-Scaffolding:** on start, it ensures `00 Inbox/`, `03 Verified Research/`, `50 Raw/`, `WORK.md`, and `03 Verified Research/README.md` exist. Existing files are never overwritten, so an older vault's `WORK.md` keeps its old "How to use" text.
+- **Skills:** copies `templates/skills/*` into the vault's `.claude/skills/`, `.opencode/skills/` and `.agents/skills/`.
+- **Marker-Fenced `AGENTS.md` Sync:** manages a block (`<!-- WORK-LOOP:START --> ... <!-- WORK-LOOP:END -->`) inside the vault root `AGENTS.md` without touching your own instructions outside it.
+- **Explicit Bootstrap:** `python3 run-loop.py --init-vault "/path/to/NewVault"`
+
+### Running Tests
 
 ```bash
 python3 -m pytest tests/ -v
@@ -390,31 +422,20 @@ ENABLE_BACKGROUND_E2E=1 pytest             # dispatch e2e in background after th
 
 Background results are written to `e2e_results.log` and reported at the top of the next test run.
 
-## Prompt Files
-
-Prompt files live in the `prompts/` directory. They control agent behavior and are injected automatically based on the item's status:
-
-| File | Triggered By | Purpose |
-|---|---|---|
-| `prompts/LOOP-PROMPT.md` | `ready`, `analyze` | Multi-agent investigation with internal critic review + child agent management + verified-research sub-agent |
-| `prompts/IMPL-PROMPT.md` | `implement` | Code implementation with code review |
-| `prompts/RESOLVE-PROMPT.md` | `resolved` | Problem/resolution summary |
-| `prompts/UPDATE-RESEARCH-PROMPT.md` | `research`, child research | Fetch sources, compare against note, write updated note and summary (unified for parent and child modes) |
-| `prompts/TASK-PROMPT.md` | child task | Scan local files, propose actions (never executes), write note + task summary |
-Each prompt receives `ITEM_ID`, `WORK_LOOP_DIR`, and `ITEM_DIR` as variables. Research items also receive `topic`, `note_path`, `sources`, `research_context`, and `BACKLINK_TARGET`. Child agents additionally receive `PARENT_ID`, `PARENT_DIR`, and `run_id`. The consolidated `UPDATE-RESEARCH-PROMPT.md` handles both parent and child modes — child mode is detected by the presence of `PARENT_ID`.
+## Under the Hood
 
 ### Sub-Agents
 
-In addition to prompt-driven agents, the loop supports **sub-agents** that orchestrate focused sub-tasks:
+Prompt-driven agents delegate focused work to sub-agents:
 
 | Sub-Agent | Role | Purpose |
 |---|---|---|
 | `critic` | Reviewer | Reviews draft findings for unverified claims, inaccessible resources, and gaps |
 | `code-reviewer` | Reviewer | Reviews code changes for correctness, edge cases, and test coverage |
-| `verified-research` | Orchestrator | Coordinates multi-topic verified web research (Path A) or retrospective discussion synthesis (Path B) |
+| `verified-research` | Orchestrator | Runs verified research: new research (Path A) or compiling from the thread (Path B) |
 | `research-worker` | Leaf Worker | Performs targeted web search for a single subtopic, writes raw extracts to a staging file, and returns a 1-line confirmation |
 
-Sub-agent definitions live in `.opencode/agents/` (and `.claude/agents/`). The `verified-research` sub-agent is dynamically compiled from `templates/VERIFIED-RESEARCH-README.md` at dispatch time, guaranteeing that human guidelines and AI behavior stay perfectly synchronized.
+Sub-agent definitions live in `.opencode/agents/` (and `.claude/agents/`). The `verified-research` sub-agent is compiled from `templates/VERIFIED-RESEARCH-README.md` at dispatch time, so the human guidelines and the agent's behaviour stay in sync.
 
 ### Verified Research Orchestration (2x2 Matrix)
 
@@ -425,33 +446,8 @@ To prevent context window exhaustion (e.g. 128k RoPE boundaries on local models)
 | **Path A: Upfront (De Novo)**<br>*(Explicit request for new deep research)* | Triggered via `LOOP-PROMPT.md` Step 7.<br>Orchestrator breaks question into 2–4 subtopics $\rightarrow$ dispatches `research-worker` **serially** to local staging (`{ITEM_DIR}/context/research/raw-*.md`) $\rightarrow$ synthesizes standard note for Human Gate review (`needs-review`). | Triggered by direct user prompt.<br>Main agent delegates to `verified-research` subagent $\rightarrow$ worker fetches out-of-band $\rightarrow$ writes `03 Verified Research/{Topic}.md` $\rightarrow$ returns 1-line confirmation. |
 | **Path B: Retrospective (Synthesis)**<br>*(Compiling an established dialogue into a note)* | Item has discussed findings across multiple iterations in `CONVERSATION.md`.<br>Agent invokes `verified-research` with conversation summary $\rightarrow$ synthesizes note using in-context quotes without re-fetching cited web pages. | User and agent explored a topic over a long interactive chat.<br>Main agent **never re-fetches web pages in the main thread**; it delegates synthesis to `verified-research` or compiles directly from in-context quotes. |
 
-#### Key Architectural Guardrails:
+#### Key Architectural Guardrails
 1. **Zero Raw Ingestion in Main Context**: The main conversation thread (in both interactive sessions and work-loop turns) must never fetch raw HTML or read full 500-line sample notes into its working context.
 2. **Context-Isolated Leaf Workers**: `research-worker` subagents execute with minimal permissions, write raw extracts to disk (`{ITEM_DIR}/context/research/raw-*.md`), and return *only* `Done: Raw research written to {OUTPUT_FILE}`, freeing their KV cache memory immediately.
 3. **Serial Execution on Local Hardware**: Workers are dispatched one at a time (serially) rather than concurrently, maintaining a flat memory footprint (~24GB weights + ~1–2GB active KV cache) on Apple Silicon / MLX.
 4. **Staging $\rightarrow$ Promotion Lifecycle**: Raw extracts stay isolated in local staging (`{ITEM_DIR}/context/research/`) during research. Only the finalized, approved synthesis note is promoted to `03 Verified Research/`.
-
-## Loop Execution Order
-
-Each iteration of the loop:
-
-1. Moves `done` rows to the Done section
-2. Resumes any running script items (polling recovery)
-3. Recovers any stalled remote jobs (polls `.done` sentinel)
-4. Refreshes the WORK.md child dashboard (report links + `## Needs Attention`)
-5. Initializes `new` items
-6. Promotes `scheduled` script and research items whose cron fires now
-7. Picks up `ready`/`analyze`/`implement`/`resolved`/`research` items and processes them
-8. Processes child agents (research and task) for all parent items (including `done` parents with active scheduled children); re-scans for newly created children after processing each parent
-
-## Vault Auto-Scaffolding & Portability
-
-The Work-Loop automatically bootstraps and synchronizes standard folder structures and agent rules for any vault it points to:
-
-- **Startup Auto-Scaffolding:** When `run-loop.py` starts, it ensures `00 Inbox/`, `03 Verified Research/`, `50 Raw/`, `WORK.md`, and `03 Verified Research/README.md` exist in the target vault.
-- **Marker-Fenced `AGENTS.md` Sync:** Work-Loop manages a dedicated block (`<!-- WORK-LOOP:START --> ... <!-- WORK-LOOP:END -->`) inside the vault root `AGENTS.md`. It safely inserts or updates CLI efficiency and verified-research rules without overwriting custom user instructions.
-- **Explicit Bootstrap Command:** To initialize a new vault on-demand:
-  ```bash
-  python3 run-loop.py --init-vault "/path/to/NewVault"
-  ```
-

@@ -4,6 +4,23 @@
 
 An automated loop that runs an AI harness (Claude or OpenCode) on work items one at a time. Each item gets a fresh context. Items can run locally or be dispatched to a remote host over SSH. The loop also supports **script items** — automated command dispatch to one or more machines with cron scheduling, multi-machine polling, and fan-in aggregation — **child agents** — parallel background research and task workers — and **vault auto-scaffolding** — automated folder initialization, template provisioning, and marker-fenced rule synchronization for any Obsidian vault.
 
+## User-Facing Terms
+
+The user docs (`README.md`, `docs/TUTORIAL.md`, `templates/WORK.md`) use simpler names than the code. Map them like this:
+
+| Docs term | Code / config term |
+|---|---|
+| Thread | conversation item (`get_item_type() == 'conversation'`, `CONVERSATION.md`) |
+| Routine | any `RUNS.md`-configured item |
+| Routine: track sources | research item / child research (`type: research`, `UPDATE-RESEARCH-PROMPT.md`) |
+| Routine: scan files | child task (`type: task`, `TASK-PROMPT.md`) |
+| Routine: run command | script item (`command:`, `get_item_type() == 'script'`) |
+| Attached routine | child / child agent (`children/<name>/`, `WORK-CHILDREN.md`) |
+| Standalone routine | top-level `RUNS.md` item with its own `WORK.md` row |
+| Verified research: new research / compile from the thread | `verified-research` sub-agent, Path A (de novo) / Path B (discussion synthesis) |
+
+Keep these docs terms when you edit the user docs.
+
 ## Directory Layout
 
 Scripts (this repo) and work items live in separate sibling directories:

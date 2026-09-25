@@ -1,19 +1,15 @@
 # Work Loop
 
 ## How to use
+New to Work-Loop? See the Tutorial (`docs/TUTORIAL.md` in the Work-Loop repo).
 
-### How to Dispatch Work
-- **Inside Note (Recommended):** Inside `CONVERSATION.md`, check the box in the Action Center callout (`[x] Continue Analyze`, `[x] Run Implement`, etc.).
-- **From this Dashboard:** Change the `Status` column directly to `ready/analyze` or `implement` (requires `work_dir: <path>` in `CONVERSATION.md`)
-- **Add New Item:** Add instructions under **Add New Item** and check the box [X]. The loop creates the folder, seeds CONVERSATION.md, and begins analysis.
-
-### Child Agents & Research
-- **Research items:** Set status to `scheduled`/`ready`, use `RUNS.md` with `type: research`, `topic:`, `note_path:`, `sources:` list, optional `schedule:` cron. Agent fetches sources, updates the note, writes per-run summary.
-- **Script items:** Use `RUNS.md` with `command:`, optional `schedule:`, `locations:` for multi-machine, `analysis_prompt:` for AI fan-in.
-- **Verified research:** Prompt the agent during `analyze` or interactive chat:
-  - **Path A (Upfront / De Novo):** _"Perform verified research on [topic]"_ or _"Research [question] and create a note in 03 Verified Research/"_ $\rightarrow$ spawns orchestrator to decompose into subtopics and dispatch serial leaf workers.
-  - **Path B (Retrospective / Synthesis):** _"Compile our findings into a verified research note in 03 Verified Research/"_ $\rightarrow$ synthesizes the note from existing in-context quotes without re-fetching cited web pages.
-- **Child agents:** During an `analyze` run, the agent can propose child agents (propose/approve workflow). Two types: `research` (fetches web sources, updates notes) and `task` (scans local files, proposes actions). Managed in `WORK-CHILDREN.md`.
+- **Start a thread:** write your request under **Add New Item** and tick the box. The loop creates the folder and `CONVERSATION.md`, and the agent replies at the top of that note.
+- **Your turn:** `needs-review` means the agent is waiting for you. Add a `## YYYY-MM-DD | User` entry at the top of the thread, then tick **Continue Analyze**.
+- **Action Center** (top of every thread): *Continue Analyze* runs another analysis round. *Run Implement* makes the agent act; it needs a `work_dir: <path>` line in the thread. *Mark Resolved* writes a summary and moves the row to Done. *Abort* stops the run.
+- **Verified research:** in a thread, ask *"Do verified research on X"* or *"Compile what we found into a verified research note"*. The result goes to `03 Verified Research/` after you review it.
+- **Attached routines:** ask a thread to repeat something, e.g. *"check these sites every Monday"* or *"suggest where inbox notes should go each morning"*. The agent proposes a routine, you approve it, and its report link appears under the thread.
+- **Standalone routines:** create `<ID>/RUNS.md` yourself and add a row here. Use `type: research` + `sources:` to keep a note updated from the web (status `research`), or `command:` to run a shell command on machines (status `ready` or `scheduled`).
+- **Needs Attention** (managed by the loop) lists everything waiting for you.
 
 ## Add New Item
 - [ ] _Add new instructions here and click the check box [X] when done. The loop creates the folder, seeds CONVERSATION.md, and moves it to Active Items_
