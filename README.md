@@ -283,7 +283,8 @@ Key papers to watch: [[AI Security/Papers]]
 | Status | Meaning |
 |---|---|
 | `research` | Run one track-sources cycle now |
-| `scheduled` | Has a cron schedule; promoted to `ready` when cron fires (see known issue below) |
+| `ready` | Set on first init and when cron fires; runs a track-sources cycle like `research` |
+| `scheduled` | Has a cron schedule; promoted to `ready` when cron fires |
 | `in-progress` | Agent is running |
 | `needs-review` | Run failed; your review needed |
 | `done` | No schedule configured and the run succeeded |
@@ -294,7 +295,7 @@ On success, the status becomes `scheduled` if the config has a schedule, otherwi
 |---|---|---|---|
 | 20260717-001 | [Added 3 new papers on model vulnerabilities](runs/20260717-001/) | success | 2026-07-17 |
 
-> **Known issue:** cron promotion (and first-time initialization) sets the status to `ready`, which currently runs `LOOP-PROMPT.md` instead of `UPDATE-RESEARCH-PROMPT.md`. For scheduled source tracking, use an attached routine, or trigger standalone runs by hand with `research`.
+The item's `CONVERSATION.md` Action Center has only **Run Now** (sets `research`) and **Abort**.
 
 ### Run-Command Routine (Script Item)
 

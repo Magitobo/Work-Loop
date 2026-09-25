@@ -243,10 +243,9 @@ Add a row under **Active Items** with status `research`:
 | [AI Security](AI-SECURITY/RUNS.md) | research | | | AI-SECURITY |
 ```
 
-The agent fetches each source, compares it with the note, rewrites the note with a **Recent Updates** section, and logs the run in `RUNS.md`. When it finishes, the status becomes `done`, or `scheduled` if the config has a `schedule:`. To run it again, set the status back to `research`.
+The agent fetches each source, compares it with the note, rewrites the note with a **Recent Updates** section, and logs the run in `RUNS.md`. When it finishes, the status becomes `done`, or `scheduled` if the config has a `schedule:`, and the next run happens automatically when the cron fires.
 
-> [!warning] Known issue: schedules on standalone track-sources routines
-> When the cron fires, the loop sets the status to `ready`, and `ready` currently runs the thread prompt instead of the track-sources prompt. Until that's fixed, use an **attached** routine (§5) when you need a schedule, or trigger the standalone one by hand with status `research`.
+To run it again by hand, tick **Run Now** in the Action Center of the item's `CONVERSATION.md`, or set the status back to `research`. A track-sources routine's Action Center only has **Run Now** and **Abort**; the thread actions don't apply to it.
 
 ### Run command
 
@@ -299,7 +298,7 @@ The loop copies the item folder and prompts to the remote, starts the agent deta
 | `ready` / `analyze` | you | thread | Analysis round |
 | `implement` | you | thread | Implementation round in `work_dir` |
 | `resolved` | you | thread | Summary written, row moved to Done |
-| `research` | you | track sources | One track-sources run |
+| `research` | you (or **Run Now**) | track sources | One track-sources run |
 | `scheduled` | loop (or you) | routines | Waits for the cron, then becomes `ready` |
 | `in-progress` | loop | thread, track sources | An agent is running now |
 | `running` | loop | run command | Commands are running on the machines |
