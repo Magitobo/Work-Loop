@@ -199,6 +199,8 @@ The loop automatically provisions and maintains the vault environment it is atta
 1. **Startup Auto-Scaffolding (`workloop/scaffold.py`):**
    - Automatically ensures `00 Inbox/`, `03 Verified Research/`, `50 Raw/`, and the work items directory exist.
    - Copies missing starter files: `03 Verified Research/README.md` and `WORK.md`.
+   - Syncs the marker-fenced `<!-- WORK-LOOP:HOWTO:START/END -->` "How to use" section of an existing `WORK.md` from `templates/WORK.md`, leaving the rest of the file alone.
+   - Mirrors the user docs in `USER_DOCS` (`README.md`, `docs/TUTORIAL.md`) into `<work_dir>` at the same relative paths (overwritten when the source changes). Add new user-facing docs to that tuple.
 2. **Marker-Fenced `AGENTS.md` Sync:**
    - Synchronizes the managed block between `<!-- WORK-LOOP:START -->` and `<!-- WORK-LOOP:END -->` in the target vault's root `AGENTS.md`.
    - Never overwrites custom user instructions outside the markers.

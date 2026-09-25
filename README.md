@@ -69,6 +69,8 @@ Work-Loop/                    ← scripts repo
 ├── .opencode/ / .claude/     ← agent config + sub-agent definitions
 └── <work_dir>/               ← work items (path configured in config.json)
     ├── WORK.md               ← the dashboard
+    ├── README.md             ← copy of this guide (managed)
+    ├── docs/TUTORIAL.md      ← copy of the tutorial (managed)
     └── <item-id>/            ← one folder per thread or standalone routine
         ├── CONVERSATION.md   ← thread between you and the agent
         ├── RUNS.md           ← (standalone routines) config + run history
@@ -402,7 +404,9 @@ Each iteration of the loop:
 
 Work-Loop bootstraps and syncs standard folders and agent rules in any vault it points to:
 
-- **Startup Auto-Scaffolding:** on start, it ensures `00 Inbox/`, `03 Verified Research/`, `50 Raw/`, `WORK.md`, and `03 Verified Research/README.md` exist. Existing files are never overwritten, so an older vault's `WORK.md` keeps its old "How to use" text.
+- **Startup Auto-Scaffolding:** on start, it ensures `00 Inbox/`, `03 Verified Research/`, `50 Raw/`, `WORK.md`, and `03 Verified Research/README.md` exist.
+- **Managed "How to use" in `WORK.md`:** the section between `<!-- WORK-LOOP:HOWTO:START -->` and `<!-- WORK-LOOP:HOWTO:END -->` is replaced from `templates/WORK.md` on every start; the rest of `WORK.md` is never touched. A `WORK.md` without the markers gets its `## How to use` section (up to the next `## ` heading) replaced once, or the block inserted under the title.
+- **User docs:** copies the files listed in `USER_DOCS` (`workloop/scaffold.py`; currently `README.md` and `docs/TUTORIAL.md`) into `<work_dir>` at the same relative paths, so the links between them work in the vault too. They are refreshed whenever the source changes, and local edits to the vault copies are overwritten.
 - **Skills:** copies `templates/skills/*` into the vault's `.claude/skills/`, `.opencode/skills/` and `.agents/skills/`.
 - **Marker-Fenced `AGENTS.md` Sync:** manages a block (`<!-- WORK-LOOP:START --> ... <!-- WORK-LOOP:END -->`) inside the vault root `AGENTS.md` without touching your own instructions outside it.
 - **Explicit Bootstrap:** `python3 run-loop.py --init-vault "/path/to/NewVault"`

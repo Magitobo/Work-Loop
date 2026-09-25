@@ -54,8 +54,10 @@ Open `WORK.md` in Obsidian. It has four parts:
 | **Active Items** | One row per thread or standalone routine, with its status, last update and log |
 | **Done** | Finished items. Rows move here automatically |
 
-> [!tip] Already have a vault?
-> The scaffold only creates `WORK.md` when it doesn't exist yet, so older vaults keep their old "How to use" text. To get the current wording, copy the section from `templates/WORK.md` by hand.
+The loop also keeps copies of this tutorial (`docs/TUTORIAL.md`) and the User's Guide (`README.md`) next to `WORK.md`, and the "How to use" section links to both.
+
+> [!tip] Managed sections
+> Every time the loop starts, it refreshes those two files and the "How to use" section of `WORK.md` from the Work-Loop repo, so older vaults stay current too. The rest of `WORK.md` is never touched. Don't edit them in the vault, because your changes will be overwritten.
 
 ---
 
@@ -335,4 +337,4 @@ See the table at the end of [§5](#attached-routine-statuses).
 | Research something new / compile from the thread | "Path A (de novo)" / "Path B (discussion synthesis)" in agent prompts |
 | Action Center | the `[!action]` callout at the top of `CONVERSATION.md` |
 
-For configuration details, remote dispatch internals and how the sub-agents are arranged, see the [README](../README.md).
+For configuration details, remote dispatch internals and how the sub-agents are arranged, see the [User's Guide](../README.md).

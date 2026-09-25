@@ -4,6 +4,22 @@ from pathlib import Path
 
 MANAGED_START_MARKER = "<!-- WORK-LOOP:START — DO NOT EDIT THIS BLOCK MANUALLY -->"
 MANAGED_END_MARKER = "<!-- WORK-LOOP:END -->"
+# User docs mirrored into work_dir at the same relative paths, so links between them keep working.
+USER_DOCS = ("README.md", "docs/TUTORIAL.md")
+
+
+def managed_doc_header(rel_path: str) -> str:
+    return (
+        f"<!-- Managed by Work-Loop: copied from {rel_path} in the Work-Loop repo on every start. "
+        "Local edits are overwritten. -->\n"
+    )
+
+
+HOWTO_RE = re.compile(
+    r"<!--\s*WORK-LOOP:HOWTO:START.*?-->.*?<!--\s*WORK-LOOP:HOWTO:END\s*-->",
+    re.DOTALL,
+)
+LEGACY_HOWTO_RE = re.compile(r"^## How to use[^\n]*\n.*?(?=^## |\Z)", re.DOTALL | re.MULTILINE)
 MANAGED_RE = re.compile(
     r"<!--\s*WORK-LOOP:START.*?-->.*?<!--\s*WORK-LOOP:END\s*-->",
     re.DOTALL | re.IGNORECASE,
@@ -121,6 +137,36 @@ def sync_agents_md(agents_path: Path, template_path: Path) -> bool:
         return True
 
 
+def sync_work_md_howto(work_md: Path, template_path: Path) -> bool:
+    """Replace the marker-fenced "How to use" section of WORK.md with the template's.
+
+    A WORK.md without markers gets its unfenced `## How to use` section (up to the next
+    `## ` heading) replaced, or the block inserted after the `# ` title if it has none.
+    Returns True if the file was modified.
+    """
+    if not work_md.exists() or not template_path.exists():
+        return False
+    m = HOWTO_RE.search(template_path.read_text(encoding='utf-8'))
+    if not m:
+        return False
+    block = m.group(0)
+
+    text = work_md.read_text(encoding='utf-8')
+    if HOWTO_RE.search(text):
+        new_text = HOWTO_RE.sub(lambda _: block, text, count=1)
+    elif (legacy := LEGACY_HOWTO_RE.search(text)):
+        new_text = text[:legacy.start()] + block + "\n\n" + text[legacy.end():]
+    elif (title := re.search(r"^# [^\n]*\n", text, re.MULTILINE)):
+        new_text = text[:title.end()] + "\n" + block + "\n\n" + text[title.end():].lstrip("\n")
+    else:
+        new_text = block + "\n\n" + text
+
+    if new_text == text:
+        return False
+    work_md.write_text(new_text, encoding='utf-8')
+    return True
+
+
 def scaffold_vault(
     work_dir: Path,
     script_dir: Path,
@@ -169,6 +215,8 @@ def scaffold_vault(
     if not work_md.exists() and work_template.exists():
         shutil.copy2(work_template, work_md)
         actions['created'].append(str(work_md))
+    elif sync_work_md_howto(work_md, work_template):
+        actions['updated'].append(str(work_md))
 
     # 3. 03 Verified Research/README.md (template is single source of truth)
     vr_readme = vault_dir / "03 Verified Research" / "README.md"
@@ -213,6 +261,18 @@ def scaffold_vault(
                             shutil.copy2(skill_file, target_skill_file)
                             actions['updated' if existed else 'created'].append(str(target_skill_file))
 
+    # 6. User docs next to WORK.md (the repo copies are single source of truth)
+    for rel_path in USER_DOCS:
+        src = script_dir / rel_path
+        if not src.exists():
+            continue
+        dst = work_dir / rel_path
+        rendered = managed_doc_header(rel_path) + src.read_text(encoding='utf-8')
+        existed = dst.exists()
+        if not existed or dst.read_text(encoding='utf-8') != rendered:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text(rendered, encoding='utf-8')
+            actions['updated' if existed else 'created'].append(str(dst))
 
     return actions
 

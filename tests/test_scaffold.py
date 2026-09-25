@@ -1,13 +1,19 @@
-import pytest
+import re
 from pathlib import Path
-from workloop.scaffold import (
-    MANAGED_START_MARKER,
-    MANAGED_END_MARKER,
-    extract_managed_block,
-    sync_agents_md,
-    scaffold_vault,
-)
+
+import pytest
+
 from workloop.core import WorkLoop
+from workloop.scaffold import (
+    MANAGED_END_MARKER,
+    MANAGED_START_MARKER,
+    USER_DOCS,
+    extract_managed_block,
+    managed_doc_header,
+    scaffold_vault,
+    sync_agents_md,
+    sync_work_md_howto,
+)
 
 
 def test_extract_managed_block():
@@ -136,6 +142,139 @@ def test_scaffold_vault_readme_syncs_template_changes(tmp_path: Path):
     res = scaffold_vault(work_dir=work_dir, script_dir=script_dir, vault_dir=vault_dir)
     assert str(readme) in res['updated']
     assert readme.read_text() == template.read_text()
+
+
+def test_scaffold_vault_mirrors_user_docs(tmp_path: Path):
+    script_dir = Path(__file__).parent.parent
+    vault_dir = tmp_path / "MyVault"
+    work_dir = vault_dir / "02-Work-Loop-Items"
+
+    res = scaffold_vault(work_dir=work_dir, script_dir=script_dir, vault_dir=vault_dir)
+    for rel in USER_DOCS:
+        dst = work_dir / rel
+        assert str(dst) in res['created']
+        assert dst.read_text() == managed_doc_header(rel) + (script_dir / rel).read_text()
+
+    # Local edits are overwritten on the next start
+    tutorial = work_dir / "docs" / "TUTORIAL.md"
+    tutorial.write_text(tutorial.read_text() + "\nlocal edit\n")
+    res = scaffold_vault(work_dir=work_dir, script_dir=script_dir, vault_dir=vault_dir)
+    assert res['updated'] == [str(tutorial)]
+    assert "local edit" not in tutorial.read_text()
+
+
+def test_user_doc_links_resolve_in_vault(tmp_path: Path):
+    """Relative links in WORK.md and the mirrored docs must point at files that exist in the vault."""
+    script_dir = Path(__file__).parent.parent
+    work_dir = tmp_path / "MyVault" / "02-Work-Loop-Items"
+    scaffold_vault(work_dir=work_dir, script_dir=script_dir, vault_dir=tmp_path / "MyVault")
+
+    link_re = re.compile(r"\]\(([^)#\s]+\.md)(?:#[^)]*)?\)")
+    checked = 0
+    for rel in ("WORK.md", *USER_DOCS):
+        doc = work_dir / rel
+        # Examples in code blocks and inline code are not real links
+        text = re.sub(r"```.*?```|`[^`\n]*`", "", doc.read_text(), flags=re.DOTALL)
+        for target in link_re.findall(text):
+            if target.startswith(("http:", "https:")):
+                continue
+            assert (doc.parent / target).resolve().is_file(), f"{rel} links to missing {target}"
+            checked += 1
+    assert checked >= 3
+
+
+_OLD_VAULT_WORK_MD = """\
+# Work Loop
+
+## How to use
+
+### How to Dispatch Work
+- old instructions
+
+### Child Agents & Research
+- **Verified research:** Path A / Path B
+
+## Add New Item
+- [ ] _Add new instructions here_
+
+<!-- WORK-LOOP:NEEDS-ATTENTION:BEGIN -->
+## Needs Attention
+- **ITEM-1** (needs-review). [Open conversation](ITEM-1/CONVERSATION.md)
+<!-- WORK-LOOP:NEEDS-ATTENTION:END -->
+
+## Active Items
+
+| Task / Conversation | Status | Last Updated | Log | ID |
+| ------------------- | :----: | :----------: | :-: | -- |
+| [Item one](ITEM-1/CONVERSATION.md) | needs-review | 2026-09-20 | | ITEM-1 |
+
+## Done
+
+| Task / Conversation | Last Updated | Log | ID |
+| ------------------- | :----------: | :-: | -- |
+"""
+
+
+def _template_howto_block(script_dir: Path) -> str:
+    text = (script_dir / "templates" / "WORK.md").read_text()
+    return text[text.index("<!-- WORK-LOOP:HOWTO:START"):text.index("<!-- WORK-LOOP:HOWTO:END -->")]
+
+
+def test_sync_work_md_howto_replaces_unfenced_section(tmp_path: Path):
+    script_dir = Path(__file__).parent.parent
+    work_md = tmp_path / "WORK.md"
+    work_md.write_text(_OLD_VAULT_WORK_MD)
+
+    assert sync_work_md_howto(work_md, script_dir / "templates" / "WORK.md") is True
+    text = work_md.read_text()
+    assert _template_howto_block(script_dir) in text
+    assert "Path A" not in text and "### How to Dispatch Work" not in text
+    # Everything from Add New Item onwards is untouched
+    tail = _OLD_VAULT_WORK_MD[_OLD_VAULT_WORK_MD.index("## Add New Item"):]
+    assert text.endswith(tail)
+    assert text.startswith("# Work Loop\n\n<!-- WORK-LOOP:HOWTO:START")
+    assert "<!-- WORK-LOOP:HOWTO:END -->\n\n## Add New Item" in text
+
+    # Second run is a no-op
+    assert sync_work_md_howto(work_md, script_dir / "templates" / "WORK.md") is False
+
+
+def test_sync_work_md_howto_replaces_fenced_section(tmp_path: Path):
+    script_dir = Path(__file__).parent.parent
+    work_md = tmp_path / "WORK.md"
+    work_md.write_text(
+        "# Work Loop\n\n"
+        "<!-- WORK-LOOP:HOWTO:START -->\n## How to use\n- stale\n<!-- WORK-LOOP:HOWTO:END -->\n\n"
+        "## Add New Item\n- [ ] mine\n"
+    )
+    assert sync_work_md_howto(work_md, script_dir / "templates" / "WORK.md") is True
+    text = work_md.read_text()
+    assert "- stale" not in text
+    assert _template_howto_block(script_dir) in text
+    assert text.endswith("<!-- WORK-LOOP:HOWTO:END -->\n\n## Add New Item\n- [ ] mine\n")
+
+
+def test_sync_work_md_howto_inserts_after_title_when_missing(tmp_path: Path):
+    script_dir = Path(__file__).parent.parent
+    work_md = tmp_path / "WORK.md"
+    work_md.write_text("# Work Loop\n\n## Add New Item\n- [ ] mine\n")
+    assert sync_work_md_howto(work_md, script_dir / "templates" / "WORK.md") is True
+    text = work_md.read_text()
+    assert text.startswith("# Work Loop\n\n<!-- WORK-LOOP:HOWTO:START")
+    assert text.endswith("<!-- WORK-LOOP:HOWTO:END -->\n\n## Add New Item\n- [ ] mine\n")
+
+
+def test_scaffold_vault_updates_howto_in_existing_work_md(tmp_path: Path):
+    script_dir = Path(__file__).parent.parent
+    vault_dir = tmp_path / "MyVault"
+    work_dir = vault_dir / "02-Work-Loop-Items"
+    work_dir.mkdir(parents=True)
+    work_md = work_dir / "WORK.md"
+    work_md.write_text(_OLD_VAULT_WORK_MD)
+
+    res = scaffold_vault(work_dir=work_dir, script_dir=script_dir, vault_dir=vault_dir)
+    assert str(work_md) in res['updated']
+    assert "](docs/TUTORIAL.md)" in work_md.read_text()
 
 
 def test_workloop_init_triggers_scaffold(tmp_path: Path):
