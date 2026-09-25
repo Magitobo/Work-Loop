@@ -207,7 +207,7 @@ def test_real_template_headings_match_regexes():
     assert sec3, "Section 3 (Verification Rules) resolved to empty — heading renamed?"
 
 
-def test_render_verified_research_agent_replaces_all_anchors(tmp_path: Path):
+def test_render_template_placeholders_replaces_all_anchors(tmp_path: Path):
     from workloop.scaffold import render_template_placeholders
 
     dummy_script_dir = tmp_path / "repo"

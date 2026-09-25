@@ -38,11 +38,6 @@ def extract_readme_section(readme_text: str, section: str | int) -> str:
     return ""
 
 
-def extract_note_template(readme_text: str) -> str:
-    """Extract the markdown note template block from VERIFIED-RESEARCH-README.md."""
-    return extract_readme_section(readme_text, 2)
-
-
 def render_template_placeholders(text: str, script_dir: Path) -> str:
     """Resolve {{path/to/template#anchor}} or {{path/to/template}} placeholders in text.
 
@@ -88,16 +83,6 @@ def render_template_placeholders(text: str, script_dir: Path) -> str:
             return content
 
     return pattern.sub(_replace, text)
-
-
-
-def render_verified_research_agent(agent_template_path: Path, readme_path: Path) -> str:
-    """Render verified-research.md agent definition by replacing {{templates/VERIFIED-RESEARCH-README.md#...}} placeholders."""
-    if not agent_template_path.exists():
-        return ""
-    agent_text = agent_template_path.read_text(encoding='utf-8')
-    script_dir = readme_path.parent.parent
-    return render_template_placeholders(agent_text, script_dir)
 
 
 def sync_agents_md(agents_path: Path, template_path: Path) -> bool:

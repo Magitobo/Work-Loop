@@ -186,49 +186,6 @@ class ChildrenMixin:
                 return False, cname
         return True, None
 
-    def _update_parent_work_children(self, parent_id: str) -> None:
-        """Rebuild non-status columns of WORK-CHILDREN.md from children's RUNS.md data."""
-        children = self.get_children(parent_id)
-        if not children:
-            return
-        work_children_path = self.work_dir / parent_id / "WORK-CHILDREN.md"
-        if not work_children_path.exists():
-            return
-        existing_text = work_children_path.read_text()
-        lines = existing_text.splitlines(keepends=True)
-        new_lines = []
-        in_table = False
-        for line in lines:
-            stripped = line.rstrip('\n')
-            if stripped.startswith('| --') or stripped.startswith('|--'):
-                in_table = True
-                new_lines.append(line)
-                continue
-            if in_table and stripped.startswith('|'):
-                cols = stripped.split('|')
-                if len(cols) < CH_ID + 1:
-                    new_lines.append(line)
-                    continue
-                cname = cols[CH_ID].strip()
-                found = False
-                for child_name, _, cfg in children:
-                    if child_name == cname:
-                        title = cfg.get('title', child_name)
-                        cols[CH_TITLE] = f" [{title}](children/{child_name}/RUNS.md) "
-                        line = '|'.join(cols) + '\n'
-                        found = True
-                        break
-                if not found:
-                    continue
-                new_lines.append(line)
-                continue
-            if in_table and not stripped.startswith('|'):
-                in_table = False
-                new_lines.append(line)
-                continue
-            new_lines.append(line)
-        work_children_path.write_text(''.join(new_lines))
-
     def process_child(self, parent_id: str, child_name: str) -> None:
         """Process a child agent (research or task). Updates parent's Last Updated in top-level WORK.md."""
         child_dir = self.work_dir / parent_id / "children" / child_name

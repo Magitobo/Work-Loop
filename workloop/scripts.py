@@ -353,12 +353,6 @@ class ScriptsMixin:
             lines.insert(table_sep_idx + 1, row)
             runs_file.write_text("".join(lines))
 
-    def _create_run_dir(self, item_id: str, run_id: str) -> Path:
-        """Create runs/{run_id}/ directory and return its path."""
-        run_dir = self.work_dir / item_id / "runs" / run_id
-        run_dir.mkdir(parents=True, exist_ok=True)
-        return run_dir
-
     def _append_research_run(
         self,
         item_id: str,
