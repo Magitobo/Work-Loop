@@ -1,10 +1,8 @@
 # Base Execution Rules
 
-## Reasoning Budget & Thinking Level: Medium
-- **Thinking Level:** Medium / Concise.
-- Keep internal reasoning (`<think>`) strictly under 2–4 sentences per step.
-- State your direct hypothesis/intent and immediately take action or invoke tools.
-- Do NOT draft full code blocks, repeat whole files, or loop through repetitive self-verification inside thought tags.
+## Execution Discipline
+- Proceed directly to actions without unnecessary preamble or unprompted conversational monologue.
+- Do NOT draft full code blocks or duplicate whole files in your output prior to tool use.
 
 ## Direct Execution for Targeted Tasks
 - For documentation updates, typos, single-file edits, running test commands, or direct user instructions:

@@ -3,9 +3,9 @@
 The following rules dictate how AI agents interact with this Obsidian workspace.
 
 <!-- WORK-LOOP:START — DO NOT EDIT THIS BLOCK MANUALLY -->
-## 1. Agent Reasoning & Execution Efficiency
-- **Concise Reasoning**: Keep thoughts under 2–4 sentences per step. State the direct intent and immediately invoke tools.
-- **No Pre-Drafting in Thoughts**: Do not pre-draft entire notes, frontmatter, or large diffs inside reasoning thoughts. Extract parameters and call the appropriate tool directly.
+## 1. Agent Execution Efficiency
+- **Execution Discipline**: Proceed directly to actions without unnecessary preamble. Extract parameters and invoke tools directly.
+- **No Pre-Drafting**: Do not pre-draft entire notes, frontmatter, or large diffs in conversation before tool use.
 - **Clean Subagent Payloads**: All subagents inherit workspace rules and their own definitions. Pass **ONLY** raw task parameters and data payloads (topics, target files, diffs, quotes, summaries). Do **NOT** re-explain workspace rules, templates, or formatting instructions in subagent prompts.
 - **Cache-Friendly Context**: Never inject dynamic timestamps, git hashes, or ephemeral state into static rules or subagent headers to preserve KV prompt caching.
 
