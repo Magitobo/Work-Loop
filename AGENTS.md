@@ -13,7 +13,7 @@ MyNotebook/
 ├── Work-Loop/              ← scripts repo (this directory)
 │   ├── run-loop.py         ← execution shim
 │   ├── workloop/           ← core package (core, remote, scripts, children, outline, harness, scaffold)
-│   ├── test_run_loop.py
+│   ├── tests/              ← unit tests (one file per module) + opt-in e2e
 │   ├── config.json         ← harness, work_dir, budget settings
 │   ├── prompts/            ← prompt templates directory
 │   │   ├── BASE-PROMPT.md  ← base execution rules (reasoning budget, fast-path) prepended to all prompts
@@ -62,7 +62,7 @@ MyNotebook/
 | `prompts/RESOLVE-PROMPT.md` | Prompt injected for `resolved` items (summarize problem/resolution) |
 | `prompts/UPDATE-RESEARCH-PROMPT.md` | Prompt for `research` items + child research (unified parent/child modes) |
 | `prompts/TASK-PROMPT.md` | Prompt for child task agents (scan + propose, never execute) |
-| `test_run_loop.py` | Unit tests (+ optional remote integration test) |
+| `tests/` | Unit tests, one file per `workloop/` module (+ optional remote integration test); shared fixtures in `tests/test_helpers.py` |
 | `tests/test_scaffold.py` | Unit tests for vault scaffolding, marker sync, and anchor resolution |
 | `tests/test_e2e.py` | E2E tests (run the real harness; opt-in via `ENABLE_E2E_TESTS`) |
 
