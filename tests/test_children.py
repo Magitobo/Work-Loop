@@ -421,12 +421,34 @@ class TestValidateNotePathUniqueness(unittest.TestCase):
 
 class TestResumeRunningChildren(unittest.TestCase):
 
-    def test_skips_running_children_with_active_parent(self):
+    def test_resets_stale_running_child_to_scheduled(self):
         with tempfile.TemporaryDirectory() as tmp:
             wl = _make_parent_with_children(tmp, "PARENT-001", [
                 {"name": "areas", "status": "running", "runs_md": _CHILD_RUNS_MD}
             ])
-            # Parent is "ready" (not done) — should skip
+            # Parent is "ready" (not done), no live harness — stale, has schedule
+            wl.resume_running_children()
+            wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
+            status = wl._get_child_status(wc_path, "areas")
+            self.assertEqual(status, "scheduled")
+
+    def test_resets_stale_running_child_to_ready_without_schedule(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runs_md_no_schedule = _CHILD_RUNS_MD.replace("schedule: 0 */6 * * *\n", "")
+            wl = _make_parent_with_children(tmp, "PARENT-001", [
+                {"name": "areas", "status": "running", "runs_md": runs_md_no_schedule}
+            ])
+            wl.resume_running_children()
+            wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
+            status = wl._get_child_status(wc_path, "areas")
+            self.assertEqual(status, "ready")
+
+    def test_keeps_running_child_when_harness_alive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = _make_parent_with_children(tmp, "PARENT-001", [
+                {"name": "areas", "status": "running", "runs_md": _CHILD_RUNS_MD}
+            ])
+            wl._harness_process_alive = lambda parent_id, child_name: True
             wl.resume_running_children()
             wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
             status = wl._get_child_status(wc_path, "areas")

@@ -1,4 +1,5 @@
 import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -350,18 +351,43 @@ class ChildrenMixin:
                 self._update_child_status(parent_id, child_name, 'done')
                 print(f"[{_ts()}] {parent_id}/{child_name}: {child_type} complete — done")
 
+    def _harness_process_alive(self, parent_id: str, child_name: str) -> bool:
+        """Check for a live harness process referencing this child (orphan detection).
+
+        Matches the opencode `--title {parent}/{child}` arg or the claude
+        `--debug-file .../{parent}_{child}.debug` path in process command lines.
+        """
+        pattern = re.escape(parent_id) + r'[/_]' + re.escape(child_name)
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", pattern],
+                capture_output=True, text=True, timeout=10,
+            )
+            return bool(result.stdout.strip())
+        except Exception:
+            return False
+
     def resume_running_children(self) -> None:
         """On startup, find running children and handle orphan recovery."""
         for parent_id in self._get_all_item_ids():
             children = self.get_children(parent_id)
-            for child_name, child_status, _ in children:
-                if child_status == 'running':
-                    parent_status = self.get_col(parent_id, COL_STATUS)
-                    if parent_status == 'done':
-                        self._update_child_status(parent_id, child_name, 'needs-review')
-                        print(f"[{_ts()}] {parent_id}/{child_name}: orphan recovery — parent is done, set to needs-review")
-                    else:
-                        print(f"[{_ts()}] {parent_id}/{child_name}: stale running status — parent agent should handle")
+            for child_name, child_status, child_config in children:
+                if child_status != 'running':
+                    continue
+                parent_status = self.get_col(parent_id, COL_STATUS)
+                if parent_status == 'done':
+                    self._update_child_status(parent_id, child_name, 'needs-review')
+                    print(f"[{_ts()}] {parent_id}/{child_name}: orphan recovery — parent is done, set to needs-review")
+                    continue
+                if self._harness_process_alive(parent_id, child_name):
+                    print(f"[{_ts()}] {parent_id}/{child_name}: harness process still alive — leaving running")
+                    continue
+                if child_config.get('schedule'):
+                    self._update_child_status(parent_id, child_name, 'scheduled')
+                    print(f"[{_ts()}] {parent_id}/{child_name}: stale running status — reset to scheduled")
+                else:
+                    self._update_child_status(parent_id, child_name, 'ready')
+                    print(f"[{_ts()}] {parent_id}/{child_name}: stale running status — reset to ready")
 
     def _resolve_child_note(self, parent_id: str, config: dict) -> Path | None:
         """Resolve a child's living_note_path to an absolute Path (or None if unset).
