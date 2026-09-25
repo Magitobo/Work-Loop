@@ -112,6 +112,7 @@ class DashboardMixin:
         - [x] Run Implement / Implement -> implement
         - [x] Mark Resolved / Resolved -> resolved
         - [x] Abort -> abort
+        - [x] Run Now -> research (research items)
 
         When detected, unchecks the box, updates status in the note's action callout
         and in WORK.md / WORK-NEW.md, and returns list of promoted item_ids.
@@ -131,7 +132,7 @@ class DashboardMixin:
                 continue
 
             pattern = re.compile(
-                r'^[ \t]*>?[ \t]*-\s*\[([xX])\]\s*(?:\*\*)?(?:(Continue\s+Analyze|Analyze|Ready)|(Run\s+Implement|Implement)|(Mark\s+Resolved(?:\s*\(Move to Done\))?|Resolved)|(Abort))(?:\*\*)?',
+                r'^[ \t]*>?[ \t]*-\s*\[([xX])\]\s*(?:\*\*)?(?:(Continue\s+Analyze|Analyze|Ready)|(Run\s+Implement|Implement)|(Mark\s+Resolved(?:\s*\(Move to Done\))?|Resolved)|(Abort)|(Run\s+Now))(?:\*\*)?',
                 re.MULTILINE | re.IGNORECASE
             )
             match = pattern.search(text)
@@ -146,6 +147,8 @@ class DashboardMixin:
                 new_status = "resolved"
             elif match.group(5):
                 new_status = "abort"
+            elif match.group(6):
+                new_status = "research"
             else:
                 continue
 
@@ -184,6 +187,7 @@ class DashboardMixin:
 
         When status is not in-progress:
         - Shows full actions: Continue Analyze, Run Implement, Mark Resolved, Abort
+        - Research items only show Run Now and Abort
         """
         conv_file = self.work_dir / item_id / "CONVERSATION.md"
         if not conv_file.exists():
@@ -223,6 +227,13 @@ class DashboardMixin:
             callout_block = (
                 "> [!action] **Work-Loop Action Center**\n"
                 f"> Status: `in-progress` | Last Run: {ts_str}{log_str}\n"
+                "> - [ ] **Abort**"
+            )
+        elif self.get_item_type(item_id) == 'research':
+            callout_block = (
+                "> [!action] **Work-Loop Action Center**\n"
+                f"> Status: `{status}` | Last Run: {ts_str}{log_str}\n"
+                "> - [ ] **Run Now**\n"
                 "> - [ ] **Abort**"
             )
         else:

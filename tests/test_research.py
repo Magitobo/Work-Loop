@@ -118,6 +118,61 @@ sources:
         self.assertIn("AI Security", conv.read_text())
 
 
+class TestResearchActionCallout(unittest.TestCase):
+    """Research items get a reduced Action Center: Run Now + Abort."""
+
+    def test_initialized_research_item_has_reduced_callout(self):
+        content = (
+            "| ID | Title / Initial Prompt | Location | Status | Last Updated | Budget | Log |\n"
+            "| -- | --------------------- | -------- | ------ | ------------ | ------ | --- |\n"
+            "| RES-001 | AI Security Research | local | new | | | |\n\n"
+            "## Done\n\n"
+            "| ID | Title / Initial Prompt | Location | Status | Last Updated | Budget | Log |\n"
+            "| -- | --------------------- | -------- | ------ | ------------ | ------ | --- |\n"
+        )
+        tmp = tempfile.mkdtemp()
+        wl = _make_research_item(tmp, "RES-001", _RESEARCH_RUNS_MD, work_md=content)
+        wl.initialize_new_item("RES-001")
+        text = (Path(tmp) / "RES-001" / "CONVERSATION.md").read_text()
+        self.assertIn("Status: `scheduled`", text)
+        self.assertIn("> - [ ] **Run Now**", text)
+        self.assertIn("> - [ ] **Abort**", text)
+        self.assertNotIn("Continue Analyze", text)
+        self.assertNotIn("Run Implement", text)
+        self.assertNotIn("Mark Resolved", text)
+
+    def test_inject_callout_for_research_item_is_reduced(self):
+        tmp = tempfile.mkdtemp()
+        wl = _make_research_item(tmp, "RES-001", _RESEARCH_RUNS_MD)
+        conv_file = Path(tmp) / "RES-001" / "CONVERSATION.md"
+        conv_file.write_text("## 2026-01-01 | User\n\nResearch item: AI Security\n")
+        wl._inject_or_update_action_callout("RES-001", "scheduled", 10.0, log_link="[Log](_logs/x.log)")
+        text = conv_file.read_text()
+        self.assertIn("Status: `scheduled`", text)
+        self.assertIn("> - [ ] **Run Now**", text)
+        self.assertIn("> - [ ] **Abort**", text)
+        self.assertNotIn("Continue Analyze", text)
+        self.assertNotIn("Run Implement", text)
+        self.assertNotIn("Mark Resolved", text)
+
+    def test_checked_run_now_triggers_research(self):
+        tmp = tempfile.mkdtemp()
+        wl = _make_research_item(tmp, "RES-001", _RESEARCH_RUNS_MD)
+        conv_file = Path(tmp) / "RES-001" / "CONVERSATION.md"
+        conv_file.write_text(
+            "> [!action] **Work-Loop Action Center**\n"
+            "> Status: `scheduled` | Last Run: 2026-01-01 06:00\n"
+            "> - [x] **Run Now**\n"
+            "> - [ ] **Abort**\n\n"
+            "## 2026-01-01 | User\n\nResearch item: AI Security\n"
+        )
+        promoted = wl._scan_in_note_actions()
+        self.assertIn("RES-001", promoted)
+        self.assertEqual(wl.get_col("RES-001", COL_STATUS), "research")
+        text = conv_file.read_text()
+        self.assertIn("> - [ ] **Run Now**", text)
+        self.assertIn("Status: `research`", text)
+
 class TestResearchTriggerStatus(unittest.TestCase):
 
     def test_research_is_trigger_status(self):
@@ -224,6 +279,32 @@ sources:
         with patch.object(WorkLoop, "_run_harness", return_value=0):
             wl.process_local("RES-001", 10.0)
         self.assertEqual(wl.get_col("RES-001", COL_STATUS), "done")
+
+    def test_ready_research_item_uses_research_prompt(self):
+        """After cron promotion the status is `ready`; the research path must still run."""
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl(tmp, status="ready")
+            (Path(tmp) / "UPDATE-RESEARCH-PROMPT.md").write_text("RESEARCH prompt content\n")
+            run_dir = Path(tmp) / "RES-001" / "runs" / "20260717-001"
+            run_dir.mkdir(parents=True)
+            (run_dir / "research.md").write_text("## 2026-07-17 — AI Security\n\n- Added 3 new papers\n")
+
+            captured = {}
+
+            def capture(prompt, *args, **kwargs):
+                captured["prompt"] = prompt
+                return 0
+
+            with patch.object(WorkLoop, "_run_harness", side_effect=capture):
+                wl.process_local("RES-001", 10.0)
+
+            self.assertIn("RESEARCH prompt content", captured["prompt"])
+            self.assertNotIn("Do the work.", captured["prompt"])
+            self.assertIn("sources:", captured["prompt"])
+            self.assertEqual(wl.get_col("RES-001", COL_STATUS), "scheduled")
+            runs_text = (Path(tmp) / "RES-001" / "RUNS.md").read_text()
+            self.assertIn("runs/20260717-001/research.md", runs_text)
 
     def test_research_failure_sets_needs_review(self):
         from unittest.mock import patch

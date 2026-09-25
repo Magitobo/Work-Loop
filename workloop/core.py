@@ -244,21 +244,20 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
         item_dir = self.work_dir / item_id
         item_dir.mkdir(parents=True, exist_ok=True)
 
+        initial_status = 'scheduled' if config.get('schedule') else 'ready'
+
         conv_file = item_dir / "CONVERSATION.md"
         if not conv_file.exists():
             title = config.get('title', item_id)
             today = datetime.now().strftime('%Y-%m-%d')
             action_callout = (
                 "> [!action] **Work-Loop Action Center**\n"
-                f"> Status: `ready` | Budget: `${self.max_budget}` | Last Run: {today}\n"
-                "> - [ ] **Continue Analyze**\n"
-                "> - [ ] **Run Implement**\n"
-                "> - [ ] **Mark Resolved (Move to Done)**\n"
+                f"> Status: `{initial_status}` | Budget: `${self.max_budget}` | Last Run: {today}\n"
+                "> - [ ] **Run Now**\n"
                 "> - [ ] **Abort**\n\n"
             )
             conv_file.write_text(f"{action_callout}## {today} | User\n\nResearch item: {title}\n")
 
-        initial_status = 'scheduled' if config.get('schedule') else 'ready'
         self.update_col(item_id, COL_STATUS, initial_status)
         print(f"[{_ts()}] Initialized research item: {item_id} (status: {initial_status})")
 
@@ -547,6 +546,9 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
         log_link = f"[Log]({item_id}/_logs/{ts}_{item_id}.log)"
 
         mode = self.get_col(item_id, COL_STATUS)  # read trigger status BEFORE overwriting
+        # Research items run the research prompt whatever the trigger status: init and
+        # cron promotion set `ready`; `research` stays as an explicit manual trigger.
+        is_research = mode == "research" or self.get_item_type(item_id) == "research"
         self.update_col(item_id, COL_STATUS, "in-progress")
         self._inject_or_update_action_callout(
             item_id,
@@ -556,7 +558,7 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
             log_link=f"[Log](_logs/{ts}_{item_id}.log)",
         )
 
-        if mode == "research":
+        if is_research:
             config = self._parse_runs_md(item_id)
             research_prompt_file = self._resolve_prompt("UPDATE-RESEARCH-PROMPT.md")
             if research_prompt_file.exists():
@@ -605,7 +607,7 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
             prompt_text = self.prompt_file.read_text()
             cwd = str(self.work_dir)
 
-        if mode != "research":
+        if not is_research:
             item_dir = str(self.work_dir / item_id)
             prompt = (
                 f"{self._read_base_prompt()}"
@@ -643,7 +645,7 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
         else:
             self.update_col(item_id, COL_BUDGET, f"${budget}")
             self._inject_session_cost(item_id, run_start)
-            if mode == "research":
+            if is_research:
                 config = self._parse_runs_md(item_id)
                 run_dir = self.work_dir / item_id / "runs"
                 latest_run = None
