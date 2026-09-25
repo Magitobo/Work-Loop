@@ -755,6 +755,56 @@ SAMPLE_WORK_NEW_MD = """\
 """
 
 
+# Streamlined table format (the shipped templates/WORK.md layout): column order
+# differs from the legacy COL_* indices, so scanners must go through the
+# format-aware parser.
+SAMPLE_STREAMLINED_WORK_MD = """\
+# Work Loop
+
+## How to use
+
+### Status Values
+- ready / analyze — Analysis agent
+- implement — Implementation agent
+- resolved — Summarizes final problem and resolution
+
+## Active Items
+
+| Task / Conversation | Status | Last Updated | Log | ID |
+|---|:---:|:---:|:---:|---|
+| [Task one](ITEM-001/CONVERSATION.md) | ready | 2026-08-01 | [Log](ITEM-001/_logs/log1.log) | ITEM-001 |
+| [Task two](ITEM-002/CONVERSATION.md) | needs-review | 2026-08-02 | [Log](ITEM-002/_logs/log2.log) | ITEM-002 |
+
+## Add New Item
+- [ ] Explore Canadian banking options
+
+## Done
+
+| Task / Conversation | Last Updated | Log | ID |
+|---|:---:|:---:|---|
+| [Old task](ITEM-000/CONVERSATION.md) | 2026-07-14 | [Log](ITEM-000/_logs/old.log) | ITEM-000 |
+"""
+
+
+_STREAMLINED_SCRIPT_WORK_MD = """\
+# Work Loop
+
+## Active Items
+
+| Task / Conversation | Status | Last Updated | Log | ID |
+|---|:---:|:---:|:---:|---|
+| [Scheduled script](SI-001/RUNS.md) | scheduled | 2026-08-01 |  | SI-001 |
+| [Running script](SI-002/RUNS.md) | running | 2026-08-01 |  | SI-002 |
+| [Conversation](CONV-001/CONVERSATION.md) | scheduled | 2026-08-01 |  | CONV-001 |
+
+## Done
+
+| Task / Conversation | Last Updated | Log | ID |
+|---|:---:|:---:|---|
+| [Old script](SI-000/RUNS.md) | 2026-07-01 |  | SI-000 |
+"""
+
+
 
 
 
@@ -766,4 +816,4 @@ if __name__ == "__main__":
 
 
 
-__all__ = ['JsonLogParser', '_HERE', '_PROMPTS_DIR', '_MOD_PATH', 'spec', 'run_loop', 'WorkLoop', 'COL_ID', 'COL_TITLE', 'COL_STATUS', 'COL_LOCATION', 'COL_BUDGET', 'COL_LOG', 'COL_LAST_UPDATED', 'REMOTE_HOST', 'REAL_WORK_DIR', '_can_reach_remote', 'REMOTE_AVAILABLE', 'TABLE_HEADER', 'make_work_md', 'SAMPLE_WORK_MD', '_make_workloop', 'RUNS_COL_ID', 'RUNS_COL_STATUS', 'DEFAULT_TIMEOUT_MIN', 'POLL_CYCLES_PER_MIN', '_SCRIPT_WORK_MD', '_SINGLE_LOC_RUNS_MD', '_MULTI_LOC_RUNS_MD', '_SCHEDULED_RUNS_MD', '_make_script_item', '_RESEARCH_RUNS_MD', '_RESEARCH_WORK_MD', '_make_research_item', 'CH_ID', 'CH_TITLE', 'CH_STATUS', 'CH_LAST_UPDATED', 'CH_BUDGET', 'CH_LOG', '_make_parent_with_children', '_CHILD_RUNS_MD', '_CHILD_TASK_RUNS_MD', 'SAMPLE_WORK_NEW_MD']
+__all__ = ['JsonLogParser', '_HERE', '_PROMPTS_DIR', '_MOD_PATH', 'spec', 'run_loop', 'WorkLoop', 'COL_ID', 'COL_TITLE', 'COL_STATUS', 'COL_LOCATION', 'COL_BUDGET', 'COL_LOG', 'COL_LAST_UPDATED', 'REMOTE_HOST', 'REAL_WORK_DIR', '_can_reach_remote', 'REMOTE_AVAILABLE', 'TABLE_HEADER', 'make_work_md', 'SAMPLE_WORK_MD', '_make_workloop', 'RUNS_COL_ID', 'RUNS_COL_STATUS', 'DEFAULT_TIMEOUT_MIN', 'POLL_CYCLES_PER_MIN', '_SCRIPT_WORK_MD', '_SINGLE_LOC_RUNS_MD', '_MULTI_LOC_RUNS_MD', '_SCHEDULED_RUNS_MD', '_make_script_item', '_RESEARCH_RUNS_MD', '_RESEARCH_WORK_MD', '_make_research_item', 'CH_ID', 'CH_TITLE', 'CH_STATUS', 'CH_LAST_UPDATED', 'CH_BUDGET', 'CH_LOG', '_make_parent_with_children', '_CHILD_RUNS_MD', '_CHILD_TASK_RUNS_MD', 'SAMPLE_WORK_NEW_MD', 'SAMPLE_STREAMLINED_WORK_MD', '_STREAMLINED_SCRIPT_WORK_MD']

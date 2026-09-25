@@ -653,3 +653,35 @@ class TestRemoteAbort(unittest.TestCase):
             self.assertIn("Run aborted", conv)
             self.assertIn("aborted by user", conv)
 
+
+
+class TestGetInprogressRemoteItemsOutline(unittest.TestCase):
+    """Regression: remote recovery must work with outline-format WORK.md."""
+
+    CONTENT = """\
+# Work Loop
+
+## Active Items
+
+- [ ] [Remote task](ITEM-A/CONVERSATION.md) · `status: in-progress` · `location: user@host1` · `ITEM-A`
+- [ ] [Local task](ITEM-B/CONVERSATION.md) · `status: in-progress` · `ITEM-B`
+- [ ] [Remote ready](ITEM-C/CONVERSATION.md) · `status: ready` · `location: user@host2` · `ITEM-C`
+
+## Done
+
+- [x] [Old](ITEM-D/CONVERSATION.md) · `status: in-progress` · `location: user@host3` · `ITEM-D`
+"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.wl = _make_workloop(self.tmp, self.CONTENT)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_returns_only_active_in_progress_remote_items(self):
+        self.assertEqual(self.wl.get_inprogress_remote_items(), [("ITEM-A", "user@host1")])
+
+    def test_streamlined_table_has_no_remote_items(self):
+        wl = _make_workloop(self.tmp, SAMPLE_STREAMLINED_WORK_MD.replace("| ready |", "| in-progress |"))
+        self.assertEqual(wl.get_inprogress_remote_items(), [])

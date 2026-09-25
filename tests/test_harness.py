@@ -8,6 +8,7 @@ import json
 import re
 import sys
 import subprocess
+import threading
 
 from test_helpers import *
 
@@ -710,3 +711,131 @@ class TestPromptLoading(unittest.TestCase):
             self.assertIsNotNone(prompt)
             self.assertIn("Resolved Mode", prompt)
 
+
+
+class _FakeProc:
+    """Minimal Popen stand-in: streams fixed stdout, then exits with returncode."""
+
+    def __init__(self, output: bytes = b"", returncode: int = 0, block: threading.Event | None = None):
+        self._chunks = [output] if output else []
+        self._block = block
+        self.returncode = None
+        self._final_rc = returncode
+        self.terminated = False
+        self.stdout = self
+
+    def read(self, _n):
+        if self._chunks:
+            return self._chunks.pop(0)
+        if self._block is not None:
+            self._block.wait(timeout=5)
+        return b""
+
+    def terminate(self):
+        self.terminated = True
+        if self._block is not None:
+            self._block.set()
+
+    def wait(self):
+        self.returncode = -15 if self.terminated else self._final_rc
+        return self.returncode
+
+
+class TestOpenCodeHarnessRun(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.log = Path(self.tmp) / "run.log"
+        self.h = run_loop.OpenCodeHarness()
+        self.h._model = ""
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _run(self, proc, budget=0, cwd=None, abort_checker=None):
+        from unittest.mock import patch
+        with patch("workloop.harness.subprocess.Popen", return_value=proc) as popen, \
+             patch.object(self.h, "_check_budget") as check, \
+             patch.object(self.h, "_cleanup_session") as cleanup, \
+             patch("sys.stdout", new=unittest.mock.MagicMock()):
+            rc = self.h.run("PROMPT", budget, cwd, "ITEM-1", self.log, abort_checker=abort_checker)
+        return rc, popen.call_args[0][0], check, cleanup
+
+    def test_runs_without_model_configured(self):
+        rc, cmd, _, cleanup = self._run(_FakeProc(b'{"ok":1}\n'))
+        self.assertEqual(rc, 0)
+        self.assertNotIn("--model", cmd)
+        self.assertEqual(cmd[-1], "PROMPT")
+        self.assertEqual(self.log.read_bytes(), b'{"ok":1}\n')
+        cleanup.assert_called_once_with("ITEM-1")
+
+    def test_model_and_dir_passed(self):
+        self.h._model = "anthropic/claude-sonnet-5"
+        _, cmd, _, _ = self._run(_FakeProc(), cwd=self.tmp)
+        self.assertEqual(cmd[cmd.index("--model") + 1], "anthropic/claude-sonnet-5")
+        self.assertEqual(cmd[cmd.index("--dir") + 1], self.tmp)
+        self.assertEqual(cmd[cmd.index("--title") + 1], "ITEM-1")
+
+    def test_nonzero_exit_passed_through_and_skips_budget_check(self):
+        rc, _, check, _ = self._run(_FakeProc(returncode=3), budget=5.0)
+        self.assertEqual(rc, 3)
+        check.assert_not_called()
+
+    def test_budget_checked_on_success(self):
+        _, _, check, _ = self._run(_FakeProc(), budget=5.0)
+        check.assert_called_once_with("ITEM-1", 5.0, self.log)
+
+    def test_abort_checker_terminates_process(self):
+        self.h._abort_poll_interval = 0.01
+        proc = _FakeProc(block=threading.Event())
+        rc, _, _, _ = self._run(proc, abort_checker=lambda: True)
+        self.assertTrue(proc.terminated)
+        self.assertEqual(rc, -15)
+
+
+class TestOpenCodeHarnessHelpers(unittest.TestCase):
+
+    def setUp(self):
+        self.h = run_loop.OpenCodeHarness()
+
+    @staticmethod
+    def _result(rc=0, stdout=""):
+        return unittest.mock.MagicMock(returncode=rc, stdout=stdout)
+
+    def test_check_budget_reports_overrun(self):
+        from unittest.mock import patch
+        with patch("workloop.harness.subprocess.run", return_value=self._result(stdout="Total cost: $12.50")), \
+             patch("builtins.print") as pr:
+            self.h._check_budget("ITEM-1", 10.0, Path("/dev/null"))
+        self.assertTrue(any("exceeded budget" in str(c) for c in pr.call_args_list))
+
+    def test_check_budget_silent_under_budget(self):
+        from unittest.mock import patch
+        with patch("workloop.harness.subprocess.run", return_value=self._result(stdout="$1.00")), \
+             patch("builtins.print") as pr:
+            self.h._check_budget("ITEM-1", 10.0, Path("/dev/null"))
+        pr.assert_not_called()
+
+    def test_check_budget_tolerates_missing_opencode(self):
+        from unittest.mock import patch
+        with patch("workloop.harness.subprocess.run", side_effect=FileNotFoundError):
+            self.h._check_budget("ITEM-1", 10.0, Path("/dev/null"))  # must not raise
+
+    def test_cleanup_deletes_only_matching_sessions(self):
+        from unittest.mock import patch
+        sessions = {"sessions": [
+            {"id": "s1", "title": "ITEM-1"},
+            {"id": "s2", "title": "OTHER"},
+            {"id": "ITEM-1", "title": ""},
+        ]}
+        with patch("workloop.harness.subprocess.run", return_value=self._result(stdout=json.dumps(sessions))) as run:
+            self.h._cleanup_session("ITEM-1")
+        deleted = [c[0][0][-1] for c in run.call_args_list if c[0][0][:3] == ["opencode", "session", "delete"]]
+        self.assertEqual(deleted, ["s1", "ITEM-1"])
+
+    def test_cleanup_tolerates_bad_json_and_failure(self):
+        from unittest.mock import patch
+        for result in (self._result(stdout="not json"), self._result(rc=1)):
+            with patch("workloop.harness.subprocess.run", return_value=result) as run:
+                self.h._cleanup_session("ITEM-1")  # must not raise
+            self.assertEqual(run.call_count, 1)

@@ -138,6 +138,26 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
                 return cols[col_idx].strip() if col_idx < len(cols) else ''
         return ''
 
+    def _active_rows(self) -> list[tuple[str, str, str]]:
+        """Return (item_id, status, location) for every Active item, in either WORK.md format."""
+        if self._is_outline_format():
+            return [
+                (item_id, item["status"], item["location"])
+                for item_id, item in self._parse_outline_blocks().items()
+                if item["section"] == "active"
+            ]
+        rows = []
+        for line in self._read_lines():
+            stripped = line.rstrip('\n')
+            if stripped.startswith('## Done'):
+                break
+            if not stripped.startswith('|'):
+                continue
+            cols = stripped.split('|')
+            if _is_data_row(cols):
+                rows.append((cols[COL_ID].strip(), cols[COL_STATUS].strip(), cols[COL_LOCATION].strip()))
+        return rows
+
     def get_ready_items(self) -> list[str]:
         self._scan_in_note_actions()
         if self._is_outline_format():

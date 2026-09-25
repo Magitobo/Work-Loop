@@ -174,19 +174,11 @@ class RemoteMixin:
 
     def get_inprogress_remote_items(self) -> list[tuple[str, str]]:
         """Return (item_id, remote_host) for in-progress remote items."""
-        items = []
-        for line in self._read_lines():
-            stripped = line.rstrip('\n')
-            if stripped.startswith('## Done'):
-                break
-            if not stripped.startswith('|'):
-                continue
-            cols = stripped.split('|')
-            if _is_data_row(cols) and cols[COL_STATUS].strip() == 'in-progress':
-                location = cols[COL_LOCATION].strip()
-                if location != 'local':
-                    items.append((cols[COL_ID].strip(), location))
-        return items
+        return [
+            (item_id, location)
+            for item_id, status, location in self._active_rows()
+            if status == 'in-progress' and location != 'local'
+        ]
 
     def check_stalled_remotes(self) -> None:
         """Recover any in-progress remote items whose remote job has since completed."""

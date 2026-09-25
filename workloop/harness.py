@@ -170,7 +170,7 @@ class OpenCodeHarness(Harness):
     """OpenCode CLI harness."""
 
     def run(self, prompt: str, budget: float, cwd: str | None, item_id: str | None, log_file: Path, abort_checker=None) -> int:
-        model_arg = ""
+        model_arg = []
         if hasattr(self, '_model') and self._model:
             model_arg = ["--model", self._model]
         cmd = [

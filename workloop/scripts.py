@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .constants import *
-from .utils import _is_data_row, _ts
+from .utils import _ts
 
 
 class ScriptsMixin:
@@ -49,17 +49,8 @@ class ScriptsMixin:
         """Return item IDs whose cron fires now (both script and research items)."""
         now = datetime.now()
         items = []
-        for line in self._read_lines():
-            stripped = line.rstrip('\n')
-            if stripped.startswith('## Done'):
-                break
-            if not stripped.startswith('|'):
-                continue
-            cols = stripped.split('|')
-            if not _is_data_row(cols):
-                continue
-            item_id = cols[COL_ID].strip()
-            if cols[COL_STATUS].strip() != 'scheduled':
+        for item_id, status, _ in self._active_rows():
+            if status != 'scheduled':
                 continue
             item_type = self.get_item_type(item_id)
             if item_type not in ('script', 'research'):
@@ -71,17 +62,8 @@ class ScriptsMixin:
 
     def resume_running_script_items(self) -> None:
         """On startup, find running script items and resume polling."""
-        for line in self._read_lines():
-            stripped = line.rstrip('\n')
-            if stripped.startswith('## Done'):
-                break
-            if not stripped.startswith('|'):
-                continue
-            cols = stripped.split('|')
-            if not _is_data_row(cols):
-                continue
-            item_id = cols[COL_ID].strip()
-            if cols[COL_STATUS].strip() != 'running':
+        for item_id, status, _ in self._active_rows():
+            if status != 'running':
                 continue
             if self.get_item_type(item_id) != 'script':
                 continue

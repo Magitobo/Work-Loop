@@ -492,3 +492,91 @@ class TestAbortHandling(unittest.TestCase):
 
             proc_mock.terminate.assert_called()
 
+
+
+class TestRunLoopRouting(unittest.TestCase):
+    """run(once=True) must route each item type to the right processor."""
+
+    _EVERY_MINUTE_SCRIPT = (
+        "## Config\n\nCommand: echo\nSchedule: * * * * *\nLocation: linux:user@host1\n"
+    )
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _wl(self, rows: str, runs_md: dict[str, str] | None = None) -> WorkLoop:
+        wl = _make_workloop(self.tmp, make_work_md(rows))
+        for item_id, text in (runs_md or {}).items():
+            d = Path(self.tmp) / item_id
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "RUNS.md").write_text(text)
+        return wl
+
+    def _run_once(self, wl: WorkLoop):
+        from unittest.mock import patch
+        mocks = {}
+        with patch.object(WorkLoop, "process_local") as mocks["process_local"], \
+             patch.object(WorkLoop, "process_script_item") as mocks["process_script_item"], \
+             patch.object(WorkLoop, "dispatch_remote") as mocks["dispatch_remote"], \
+             patch.object(WorkLoop, "wait_for_remote") as mocks["wait_for_remote"], \
+             patch.object(WorkLoop, "process_child") as mocks["process_child"]:
+            wl.run(once=True)
+        return mocks
+
+    def test_research_item_runs_locally(self):
+        wl = self._wl("| RES-1 | R | local | ready |  |  |  |", {"RES-1": _RESEARCH_RUNS_MD})
+        m = self._run_once(wl)
+        m["process_local"].assert_called_once()
+        self.assertEqual(m["process_local"].call_args[0][0], "RES-1")
+        m["process_script_item"].assert_not_called()
+
+    def test_script_item_routes_to_script_processor(self):
+        wl = self._wl("| SI-1 | S | local | ready |  |  |  |", {"SI-1": _SINGLE_LOC_RUNS_MD})
+        m = self._run_once(wl)
+        m["process_script_item"].assert_called_once_with("SI-1")
+        m["process_local"].assert_not_called()
+
+    def test_remote_conversation_sets_in_progress_and_log(self):
+        wl = self._wl("| C-1 | C | user@host | ready |  |  |  |")
+        m = self._run_once(wl)
+        m["dispatch_remote"].assert_called_once()
+        m["wait_for_remote"].assert_called_once()
+        self.assertEqual(wl.get_col("C-1", COL_STATUS), "in-progress")
+        self.assertIn("C-1/_logs/", wl.get_col("C-1", COL_LOG))
+
+    def test_local_conversation_runs_locally(self):
+        wl = self._wl("| C-1 | C | local | analyze |  |  |  |")
+        m = self._run_once(wl)
+        m["process_local"].assert_called_once()
+        m["dispatch_remote"].assert_not_called()
+
+    def test_scheduled_script_promoted_and_processed(self):
+        wl = self._wl("| SI-1 | S | local | scheduled |  |  |  |", {"SI-1": self._EVERY_MINUTE_SCRIPT})
+        m = self._run_once(wl)
+        self.assertEqual(wl.get_col("SI-1", COL_STATUS), "ready")
+        m["process_script_item"].assert_called_once_with("SI-1")
+
+    def test_ready_child_processed(self):
+        wl = _make_parent_with_children(self.tmp, "PARENT-001", [
+            {"name": "walk", "runs_md": _CHILD_RUNS_MD, "status": "ready"},
+            {"name": "idle", "runs_md": _CHILD_RUNS_MD, "status": "needs-review"},
+        ])
+        m = self._run_once(wl)
+        m["process_child"].assert_called_once_with("PARENT-001", "walk")
+
+    def test_idle_when_nothing_ready(self):
+        from unittest.mock import patch
+        wl = self._wl("| C-1 | C | local | needs-review |  |  |  |")
+
+        def stop(_secs):
+            wl._stop = True
+
+        with patch("workloop.core.time.sleep", side_effect=stop) as sleep, \
+             patch.object(WorkLoop, "process_local") as local, \
+             patch("builtins.print"):
+            wl.run(once=True)
+        sleep.assert_called_once_with(5)
+        local.assert_not_called()

@@ -153,37 +153,11 @@ class TestOutlineWorkFormat(unittest.TestCase):
 
 
 class TestStreamlinedTableWorkFormat(unittest.TestCase):
-    SAMPLE_TABLE_WORK_MD = """\
-# Work Loop
-
-## How to use
-
-### Status Values
-- ready / analyze — Analysis agent
-- implement — Implementation agent
-- resolved — Summarizes final problem and resolution
-
-## Active Items
-
-| Task / Conversation | Status | Last Updated | Log | ID |
-|---|:---:|:---:|:---:|---|
-| [Task one](ITEM-001/CONVERSATION.md) | ready | 2026-08-01 | [Log](ITEM-001/_logs/log1.log) | ITEM-001 |
-| [Task two](ITEM-002/CONVERSATION.md) | needs-review | 2026-08-02 | [Log](ITEM-002/_logs/log2.log) | ITEM-002 |
-
-## Add New Item
-- [ ] Explore Canadian banking options
-
-## Done
-
-| Task / Conversation | Last Updated | Log | ID |
-|---|:---:|:---:|---|
-| [Old task](ITEM-000/CONVERSATION.md) | 2026-07-14 | [Log](ITEM-000/_logs/old.log) | ITEM-000 |
-"""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.work_dir = Path(self.tmp)
-        (self.work_dir / "WORK-NEW.md").write_text(self.SAMPLE_TABLE_WORK_MD)
+        (self.work_dir / "WORK-NEW.md").write_text(SAMPLE_STREAMLINED_WORK_MD)
         (self.work_dir / "LOOP-PROMPT.md").write_text("Do the work.\n")
         cfg = {"work_dir": self.work_dir, "work_file": "WORK-NEW.md", "harness": {"type": "claude", "max_budget_usd": 10.00}}
         self.wl = WorkLoop(cfg)
@@ -214,6 +188,17 @@ class TestStreamlinedTableWorkFormat(unittest.TestCase):
         text = (self.work_dir / "WORK-NEW.md").read_text()
         self.assertIn("[Task one]", text)
         self.assertIn("ITEM-001", text)
+
+    def test_move_done_items_sweeps_human_marked_done(self):
+        """The loop's per-iteration sweep moves rows a human set to `done` in the file."""
+        path = self.work_dir / "WORK-NEW.md"
+        path.write_text(path.read_text().replace("| needs-review |", "| done |"))
+        self.wl.move_done_items()
+        self.assertEqual(self.wl.get_ready_items(), ["ITEM-001"])
+        text = path.read_text()
+        active, done = text.split("## Done", 1)
+        self.assertNotIn("ITEM-002", active)
+        self.assertIn("ITEM-002", done)
 
     def test_table_move_to_done_preserves_separator_position(self):
         content = """\
