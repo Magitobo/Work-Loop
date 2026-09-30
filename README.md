@@ -53,6 +53,7 @@ The loop runs indefinitely. Press `Ctrl+C` to stop.
 | `harness.type` | Yes | `"claude"` or `"opencode"` |
 | `harness.model` | No | Model string for OpenCode; ignored for Claude |
 | `harness.max_budget_usd` | No | Default per-item budget (default: `10.00`) |
+| `harness.capture_url` | No | llama-swap base URL (e.g. `http://mac-studio:5800`). After each local run, the session's request captures (model, sampling params, response text and reasoning, token counts) are saved next to the log as `_logs/<log>.llm.jsonl` |
 | `remote.work_dir` | No | Remote path for SSH dispatch (default: `~/Work-Loop`) |
 
 ## Directory Layout

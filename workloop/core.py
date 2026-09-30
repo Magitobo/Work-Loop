@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+from . import llmcapture
 from .children import ChildrenMixin
 from .constants import *
 from .dashboard import DashboardMixin
@@ -511,7 +512,12 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
         self._sync_agent_dir(target_cwd)
         def abort_checker() -> bool:
             return bool(item_id and self.get_col(item_id, COL_STATUS) == 'abort')
-        return self.harness.run(prompt, budget, target_cwd, item_id, log_file, abort_checker=abort_checker)
+        start = datetime.now(timezone.utc)
+        exit_code = self.harness.run(prompt, budget, target_cwd, item_id, log_file, abort_checker=abort_checker)
+        capture_url = self.config.get('harness', {}).get('capture_url')
+        if capture_url:
+            llmcapture.collect(capture_url, log_file, start, datetime.now(timezone.utc))
+        return exit_code
 
     def _inject_session_cost(self, item_id: str, started_after: str = '') -> None:
         """Append cost info to CONVERSATION.md after a successful run."""
