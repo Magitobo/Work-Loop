@@ -12,6 +12,15 @@ import subprocess
 
 from test_helpers import *
 
+
+def _harness_writes_summary(prompt, log_file, budget, cwd=None, item_id=None):
+    """Fake successful child run: writes the summary files into the newest run dir, exits 0."""
+    parent_id, child_name = item_id.split("/")
+    run_dir = sorted((Path(cwd) / parent_id / "children" / child_name / "runs").iterdir())[-1]
+    for name in ("research.md", "task.md"):
+        (run_dir / name).write_text("## Run summary\n")
+    return 0
+
 class TestParseChildRunsMd(unittest.TestCase):
 
     def test_parses_unified_format(self):
@@ -281,7 +290,7 @@ class TestProcessChild(unittest.TestCase):
     def test_success_with_schedule_sets_scheduled(self):
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl_with_child(tmp)
-            with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=0):
+            with unittest.mock.patch.object(WorkLoop, "_run_harness", side_effect=_harness_writes_summary):
                 wl.process_child("PARENT-001", "areas")
             wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
             status = wl._get_child_status(wc_path, "areas")
@@ -323,7 +332,7 @@ class TestProcessChild(unittest.TestCase):
             cfg = {"work_dir": p, "harness": {"type": "claude", "max_budget_usd": 10.00}, "remote": {"work_dir": "~/Work-Loop"}}
             wl = WorkLoop(cfg)
 
-            with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=0):
+            with unittest.mock.patch.object(WorkLoop, "_run_harness", side_effect=_harness_writes_summary):
                 wl.process_child("PARENT-001", "areas")
             wc_path = p / "PARENT-001" / "WORK-CHILDREN.md"
             status = wl._get_child_status(wc_path, "areas")
@@ -341,6 +350,19 @@ class TestProcessChild(unittest.TestCase):
             self.assertIn("Run failed (exit code 1)", runs_md.read_text())
             self.assertEqual(wl._count_consecutive_failed_runs(runs_md), 1)
 
+    def test_exit_zero_without_summary_is_failed_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl_with_child(tmp)
+            with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=0):
+                wl.process_child("PARENT-001", "areas")
+            wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
+            self.assertEqual(wl._get_child_status(wc_path, "areas"), "scheduled")
+            runs_md = Path(tmp) / "PARENT-001" / "children" / "areas" / "RUNS.md"
+            self.assertIn("Run ended without writing research.md", runs_md.read_text())
+            self.assertEqual(wl._count_consecutive_failed_runs(runs_md), 1)
+            run_dirs = list((runs_md.parent / "runs").iterdir())
+            self.assertTrue((run_dirs[-1] / "research.md").exists())
+
     def test_repeated_failures_set_needs_review(self):
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl_with_child(tmp)
@@ -356,7 +378,7 @@ class TestProcessChild(unittest.TestCase):
             runs_md = Path(tmp) / "PARENT-001" / "children" / "areas" / "RUNS.md"
             with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=1):
                 wl.process_child("PARENT-001", "areas")
-            with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=0):
+            with unittest.mock.patch.object(WorkLoop, "_run_harness", side_effect=_harness_writes_summary):
                 wl.process_child("PARENT-001", "areas")
             self.assertEqual(wl._count_consecutive_failed_runs(runs_md), 0)
 
@@ -386,7 +408,7 @@ class TestProcessChild(unittest.TestCase):
             wl = self._make_wl_with_child(tmp)
             today = datetime.now().strftime('%Y-%m-%d')
             self.assertEqual(wl.get_col("PARENT-001", COL_LAST_UPDATED), "")
-            with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=0):
+            with unittest.mock.patch.object(WorkLoop, "_run_harness", side_effect=_harness_writes_summary):
                 wl.process_child("PARENT-001", "areas")
             self.assertEqual(wl.get_col("PARENT-001", COL_LAST_UPDATED), today)
             self.assertEqual(wl.get_col("PARENT-001", COL_STATUS), "ready")
@@ -415,7 +437,7 @@ class TestProcessChild(unittest.TestCase):
             context_dir.mkdir(exist_ok=True)
             (context_dir / "area-walkability.md").write_text("# Walkability\n")
 
-            with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=0):
+            with unittest.mock.patch.object(WorkLoop, "_run_harness", side_effect=_harness_writes_summary):
                 wl.process_child("PARENT-001", "areas2")
             wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
             status = wl._get_child_status(wc_path, "areas2")
@@ -650,7 +672,7 @@ class TestTaskChildType(unittest.TestCase):
             run_dir = item_dir / "runs" / "20260813-001"
             run_dir.mkdir(parents=True)
             (run_dir / "task.md").write_text("## 2026-08-13 — Inbox cleanup\n\n- Proposed 3 file moves\n")
-            with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=0):
+            with unittest.mock.patch.object(WorkLoop, "_run_harness", side_effect=_harness_writes_summary):
                 wl.process_child("PARENT-001", "inbox")
             wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
             status = wl._get_child_status(wc_path, "inbox")
@@ -667,7 +689,7 @@ class TestTaskChildType(unittest.TestCase):
             run_dir = item_dir / "runs" / "20260813-001"
             run_dir.mkdir(parents=True)
             (run_dir / "task.md").write_text("## 2026-08-13 — Inbox cleanup\n\n- Proposed 3 file moves\n")
-            with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=0):
+            with unittest.mock.patch.object(WorkLoop, "_run_harness", side_effect=_harness_writes_summary):
                 wl.process_child("PARENT-001", "inbox")
             wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
             status = wl._get_child_status(wc_path, "inbox")

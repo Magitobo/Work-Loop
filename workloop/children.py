@@ -290,25 +290,33 @@ class ChildrenMixin:
             return
 
         child_log_link = f"[Log](../../_logs/{ts}_{parent_id}_{child_name}.log)"
+        summary_path = run_dir / summary_file
         if exit_code != 0:
             if self._classify_failure(parent_id, ts, log_file=log_file) == "budget":
                 self._update_child_status(parent_id, child_name, 'needs-review')
                 self._update_child_budget(parent_id, child_name, f"${budget} - EXCEEDED")
                 print(f"[{_ts()}] {parent_id}/{child_name}: budget exceeded — needs-review")
                 return
+            failure = f"Run failed (exit code {exit_code})"
+        elif not summary_path.exists():
+            # The harness exits 0 even when the model stops early (e.g. output hit max_tokens).
+            failure = f"Run ended without writing {summary_file}"
+        else:
+            failure = None
+
+        if failure:
             # Non-budget failures (e.g. model endpoint down) are recorded in the run history,
             # not the Budget column. Scheduled children keep running unless they fail repeatedly.
-            summary_path = run_dir / summary_file
             if not summary_path.exists():
                 summary_path.write_text(
                     f"[[{parent_id}/CONVERSATION]]\n\n"
-                    f"Run failed (exit code {exit_code}). See {child_log_link}.\n"
+                    f"{failure}. See {child_log_link}.\n"
                 )
             self._update_child_budget(parent_id, child_name, f"${budget}")
             self._append_research_run(
                 child_name,
                 run_id,
-                f"Run failed (exit code {exit_code})",
+                failure,
                 status='failed',
                 runs_path=runs_path,
                 summary_file=summary_file,
@@ -324,15 +332,13 @@ class ChildrenMixin:
         else:
             self._update_child_budget(parent_id, child_name, f"${budget}")
             summary = f"{child_type.capitalize()} complete"
-            summary_path = run_dir / summary_file
-            if summary_path.exists():
-                non_empty = [
-                    l.strip('# -').strip()
-                    for l in summary_path.read_text().splitlines()
-                    if l.strip() and not l.strip().startswith(('[[', '<!--'))
-                ]
-                if non_empty:
-                    summary = non_empty[0]
+            non_empty = [
+                l.strip('# -').strip()
+                for l in summary_path.read_text().splitlines()
+                if l.strip() and not l.strip().startswith(('[[', '<!--'))
+            ]
+            if non_empty:
+                summary = non_empty[0]
             self._append_research_run(
                 child_name,
                 run_id,
