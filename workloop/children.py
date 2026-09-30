@@ -186,6 +186,26 @@ class ChildrenMixin:
                 return False, cname
         return True, None
 
+    def _count_consecutive_failed_runs(self, runs_path: Path) -> int:
+        """Count 'failed' rows at the top (most recent) of the RUNS.md run table."""
+        if not runs_path.exists():
+            return 0
+        count, in_table = 0, False
+        for line in runs_path.read_text().splitlines():
+            stripped = line.strip()
+            if stripped.startswith(('| --', '|--')):
+                in_table = True
+                continue
+            if not in_table:
+                continue
+            if not stripped.startswith('|'):
+                break
+            cols = stripped.split('|')
+            if len(cols) <= RUNS_COL_STATUS or cols[RUNS_COL_STATUS].strip() != 'failed':
+                break
+            count += 1
+        return count
+
     def process_child(self, parent_id: str, child_name: str) -> None:
         """Process a child agent (research or task). Updates parent's Last Updated in top-level WORK.md."""
         child_dir = self.work_dir / parent_id / "children" / child_name
@@ -269,15 +289,38 @@ class ChildrenMixin:
             print(f"[{_ts()}] {parent_id}/{child_name}: aborted by user")
             return
 
+        child_log_link = f"[Log](../../_logs/{ts}_{parent_id}_{child_name}.log)"
         if exit_code != 0:
-            failure = self._classify_failure(f"{parent_id}_{child_name}", ts)
-            if failure == "budget":
-                budget_label, cause = f"${budget} - EXCEEDED", "budget exceeded"
+            if self._classify_failure(parent_id, ts, log_file=log_file) == "budget":
+                self._update_child_status(parent_id, child_name, 'needs-review')
+                self._update_child_budget(parent_id, child_name, f"${budget} - EXCEEDED")
+                print(f"[{_ts()}] {parent_id}/{child_name}: budget exceeded — needs-review")
+                return
+            # Non-budget failures (e.g. model endpoint down) are recorded in the run history,
+            # not the Budget column. Scheduled children keep running unless they fail repeatedly.
+            summary_path = run_dir / summary_file
+            if not summary_path.exists():
+                summary_path.write_text(
+                    f"[[{parent_id}/CONVERSATION]]\n\n"
+                    f"Run failed (exit code {exit_code}). See {child_log_link}.\n"
+                )
+            self._update_child_budget(parent_id, child_name, f"${budget}")
+            self._append_research_run(
+                child_name,
+                run_id,
+                f"Run failed (exit code {exit_code})",
+                status='failed',
+                runs_path=runs_path,
+                summary_file=summary_file,
+                log_link=child_log_link,
+            )
+            failures = self._count_consecutive_failed_runs(runs_path)
+            if config.get('schedule') and failures < MAX_CONSECUTIVE_CHILD_FAILURES:
+                self._update_child_status(parent_id, child_name, 'scheduled')
+                print(f"[{_ts()}] {parent_id}/{child_name}: run failed ({failures} in a row) — scheduled")
             else:
-                budget_label, cause = f"${budget} - FAILED", "run failed"
-            self._update_child_status(parent_id, child_name, 'needs-review')
-            self._update_child_budget(parent_id, child_name, budget_label)
-            print(f"[{_ts()}] {parent_id}/{child_name}: {cause} — needs-review")
+                self._update_child_status(parent_id, child_name, 'needs-review')
+                print(f"[{_ts()}] {parent_id}/{child_name}: run failed ({failures} in a row) — needs-review")
         else:
             self._update_child_budget(parent_id, child_name, f"${budget}")
             summary = f"{child_type.capitalize()} complete"
@@ -290,7 +333,6 @@ class ChildrenMixin:
                 ]
                 if non_empty:
                     summary = non_empty[0]
-            child_log_link = f"[Log](../../_logs/{ts}_{parent_id}_{child_name}.log)"
             self._append_research_run(
                 child_name,
                 run_id,

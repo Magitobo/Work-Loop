@@ -525,9 +525,10 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
         notice = f"## {date_str} | Script — Run aborted: {cause} (${budget})\n\n"
         conv_file.write_text(notice + existing)
 
-    def _classify_failure(self, item_id: str, ts_str: str) -> str:
+    def _classify_failure(self, item_id: str, ts_str: str, log_file: Path | None = None) -> str:
         """Return 'budget' or 'unknown' by inspecting the log file."""
-        log_file = self.work_dir / item_id / "_logs" / f"{ts_str}_{item_id}.log"
+        if log_file is None:
+            log_file = self.work_dir / item_id / "_logs" / f"{ts_str}_{item_id}.log"
         if not log_file.exists():
             return "unknown"
         try:

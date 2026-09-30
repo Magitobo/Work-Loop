@@ -329,14 +329,56 @@ class TestProcessChild(unittest.TestCase):
             status = wl._get_child_status(wc_path, "areas")
             self.assertEqual(status, "done")
 
-    def test_failure_sets_needs_review(self):
+    def test_failure_with_schedule_stays_scheduled_and_logs_failed_run(self):
         with tempfile.TemporaryDirectory() as tmp:
             wl = self._make_wl_with_child(tmp)
             with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=1):
                 wl.process_child("PARENT-001", "areas")
             wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
-            status = wl._get_child_status(wc_path, "areas")
-            self.assertEqual(status, "needs-review")
+            self.assertEqual(wl._get_child_status(wc_path, "areas"), "scheduled")
+            self.assertNotIn("FAILED", wc_path.read_text())
+            runs_md = Path(tmp) / "PARENT-001" / "children" / "areas" / "RUNS.md"
+            self.assertIn("Run failed (exit code 1)", runs_md.read_text())
+            self.assertEqual(wl._count_consecutive_failed_runs(runs_md), 1)
+
+    def test_repeated_failures_set_needs_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl_with_child(tmp)
+            wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
+            with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=1):
+                for _ in range(run_loop.MAX_CONSECUTIVE_CHILD_FAILURES):
+                    wl.process_child("PARENT-001", "areas")
+            self.assertEqual(wl._get_child_status(wc_path, "areas"), "needs-review")
+
+    def test_success_resets_failure_streak(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl_with_child(tmp)
+            runs_md = Path(tmp) / "PARENT-001" / "children" / "areas" / "RUNS.md"
+            with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=1):
+                wl.process_child("PARENT-001", "areas")
+            with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=0):
+                wl.process_child("PARENT-001", "areas")
+            self.assertEqual(wl._count_consecutive_failed_runs(runs_md), 0)
+
+    def test_budget_failure_sets_needs_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl_with_child(tmp)
+            with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=1), \
+                 unittest.mock.patch.object(WorkLoop, "_classify_failure", return_value="budget"):
+                wl.process_child("PARENT-001", "areas")
+            wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
+            self.assertEqual(wl._get_child_status(wc_path, "areas"), "needs-review")
+            self.assertIn("EXCEEDED", wc_path.read_text())
+
+    def test_failure_without_schedule_sets_needs_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wl = self._make_wl_with_child(tmp)
+            runs_md = Path(tmp) / "PARENT-001" / "children" / "areas" / "RUNS.md"
+            runs_md.write_text(_CHILD_RUNS_MD.replace("schedule: 0 */6 * * *\n", ""))
+            with unittest.mock.patch.object(WorkLoop, "_run_harness", return_value=1):
+                wl.process_child("PARENT-001", "areas")
+            wc_path = Path(tmp) / "PARENT-001" / "WORK-CHILDREN.md"
+            self.assertEqual(wl._get_child_status(wc_path, "areas"), "needs-review")
 
     def test_work_md_last_updated_when_child_runs(self):
         """process_child updates parent's Last Updated in top-level WORK.md."""

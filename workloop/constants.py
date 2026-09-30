@@ -24,3 +24,6 @@ POLL_CYCLES_PER_MIN = 60 // POLL_INTERVAL_S  # = 12
 DEFAULT_TIMEOUT_MIN = 4
 CH_BUDGET = 5
 CH_LOG = 6
+
+# Scheduled children keep their schedule after a failed run until this many fail in a row
+MAX_CONSECUTIVE_CHILD_FAILURES = 3
