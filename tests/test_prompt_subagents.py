@@ -325,17 +325,16 @@ class TestResearchWorkerAgentDefinition(unittest.TestCase):
     def test_research_worker_opencode_permissions(self):
         p = _OPENCODE_AGENTS / "research-worker.md"
         fm = _parse_frontmatter(p.read_text())
-        self.assertEqual(fm.get("permission.edit"), "deny")
+        # In OpenCode the edit permission also governs the write tool
+        self.assertEqual(fm.get("permission.edit"), "allow")
         self.assertEqual(fm.get("permission.bash"), "deny")
-        self.assertEqual(fm.get("permission.write"), "allow")
         self.assertEqual(fm.get("permission.read"), "allow")
 
     def test_research_worker_claude_permissions(self):
         p = _CLAUDE_AGENTS / "research-worker.md"
         fm = _parse_frontmatter(p.read_text())
-        self.assertEqual(fm.get("permission.edit"), "deny")
+        self.assertEqual(fm.get("permission.edit"), "allow")
         self.assertEqual(fm.get("permission.bash"), "deny")
-        self.assertEqual(fm.get("permission.write"), "allow")
         self.assertEqual(fm.get("permission.read"), "allow")
 
     def test_research_worker_description_in_frontmatter(self):
@@ -387,9 +386,8 @@ class TestVerifiedResearchAgentDefinition(unittest.TestCase):
         for agents_dir in (_OPENCODE_AGENTS, _CLAUDE_AGENTS):
             p = agents_dir / "verified-research.md"
             fm = _parse_frontmatter(p.read_text())
-            self.assertEqual(fm.get("permission.edit"), "deny")
+            self.assertEqual(fm.get("permission.edit"), "allow")
             self.assertEqual(fm.get("permission.bash"), "deny")
-            self.assertEqual(fm.get("permission.write"), "allow")
             self.assertEqual(fm.get("permission.read"), "allow")
 
     def test_verified_research_has_dynamic_anchors(self):

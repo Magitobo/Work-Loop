@@ -3,10 +3,12 @@ name: verified-research
 description: Research orchestrator that produces verified research notes in two steps — research (existing verified notes, then 50 Raw, then the web) and synthesize — and refreshes existing notes. Modes: research, synthesize, refresh.
 mode: subagent
 permission:
-  edit: deny
+  edit: allow
   bash: deny
-  write: allow
   read: allow
+  task:
+    "*": deny
+    research-worker: allow
 # Dynamic Templating:
 # This agent definition uses section anchor placeholders to reference
 # the single source of truth (templates/VERIFIED-RESEARCH-README.md).

@@ -3,9 +3,8 @@ name: research-worker
 description: Research leaf worker. With scope vault, scans 03 Verified Research and 50 Raw for a topic; with scope web, runs targeted web searches, re-verifies claims and traces leads. Extracts verbatim claims with source metadata and writes raw findings directly to an output file.
 mode: subagent
 permission:
-  edit: deny
+  edit: allow
   bash: deny
-  write: allow
   read: allow
 ---
 

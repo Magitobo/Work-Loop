@@ -4,9 +4,8 @@ description: Research leaf worker. With scope vault, scans 03 Verified Research 
 model: claude-haiku-4-5-20251001
 mode: subagent
 permission:
-  edit: deny
+  edit: allow
   bash: deny
-  write: allow
   read: allow
 ---
 
