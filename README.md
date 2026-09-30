@@ -66,8 +66,8 @@ Work-Loop/                    ← scripts repo
 ├── docs/TUTORIAL.md          ← step-by-step introduction
 ├── config.json               ← harness + directory settings
 ├── prompts/                  ← prompt templates (see Prompt Files)
-├── templates/                ← vault scaffolding templates (AGENTS.md, WORK.md, Verified Research README)
-├── .opencode/ / .claude/     ← agent config + sub-agent definitions
+├── templates/                ← vault scaffolding templates (AGENTS.md, WORK.md, Verified Research README, skills)
+│   └── agents/opencode/ / agents/claude/  ← sub-agent definitions synced into the workspace
 └── <work_dir>/               ← work items (path configured in config.json)
     ├── WORK.md               ← the dashboard
     ├── README.md             ← copy of this guide (managed)
@@ -355,7 +355,7 @@ Notes follow the rules in `03 Verified Research/README.md` (scaffolded from `tem
 When an item's location is a remote host (e.g. `user@hostname`), the loop:
 
 1. **Wipes** `~/Work-Loop` on the remote (cleans up previous aborted runs)
-2. **Rsyncs** the item folder, prompt files, and agent config (`.claude/` or `.opencode/`)
+2. **Rsyncs** the item folder, prompt files, and the sub-agent definitions (into `.claude/agents/` or `.opencode/agents/`)
 3. **Writes** a minimal stub `WORK.md` so the agent can update status
 4. **Launches** a detached bash script via `nohup` (survives SSH disconnect)
 5. **Polls** `{item_id}/.done` every 5 seconds for the exit code
@@ -453,7 +453,7 @@ Prompt-driven agents delegate focused work to sub-agents:
 | `verified-research` | Orchestrator | Runs verified research in `research`, `synthesize` or `refresh` mode: dispatches workers, then synthesizes the note |
 | `research-worker` | Leaf Worker | `scope: vault` scans `03 Verified Research/` and `50 Raw/`; `scope: web` searches, re-verifies claims and traces leads. Writes raw extracts to a staging file and returns a 1-line confirmation |
 
-Sub-agent definitions live in `.opencode/agents/` (and `.claude/agents/`). The `verified-research` and `research-worker` sub-agents are compiled from `templates/VERIFIED-RESEARCH-README.md` at dispatch time, so the human guidelines and the agent's behaviour stay in sync.
+Sub-agent definitions live in `templates/agents/opencode/` (and `templates/agents/claude/`). Before each run they are copied into the workspace's `.opencode/agents/` (or `.claude/agents/`); nothing else in that folder is touched. The repo's own `.opencode/` and `.claude/` are only for developing Work-Loop. Nested sub-agents (`verified-research` → `research-worker`) need `"subagent_depth": 2` in the OpenCode config, since the default of 1 stops sub-agents from launching sub-agents. The `verified-research` and `research-worker` sub-agents are compiled from `templates/VERIFIED-RESEARCH-README.md` at dispatch time, so the human guidelines and the agent's behaviour stay in sync.
 
 ### Verified Research Orchestration
 

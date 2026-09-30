@@ -1,6 +1,5 @@
 import os
 import re
-import shutil
 import signal
 import sys
 import time
@@ -66,7 +65,7 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
         self.scaffold_actions = self.scaffold_vault()
 
         # Sync harness agent definitions into the vault root (or work_dir if standalone)
-        # so edits to .opencode/agents or .claude/agents are picked up on every startup.
+        # so edits to templates/agents/ are picked up on every startup.
         target_dir = self.work_dir.parent if (self.work_dir.parent / ".obsidian").exists() else self.work_dir
         self._sync_agent_dir(str(target_dir))
 
@@ -453,58 +452,25 @@ class WorkLoop(OutlineMixin, ChildrenMixin, ScriptsMixin, RemoteMixin, Dashboard
         print(f"[{_ts()}] WARNING: no 'work_dir:' found in {item_id}/CONVERSATION.md — using loop root")
         return str(self.work_dir)
 
+    def _agent_template_dir(self) -> Path:
+        """Return templates/agents/<harness>/, the source of the harness's subagent definitions."""
+        return self.script_dir / "templates" / "agents" / self.harness.agent_dir_name().lstrip(".")
+
     def _sync_agent_dir(self, target_cwd: str) -> None:
-        """Copy harness agent directory from script_dir to target workspace.
+        """Copy the harness's subagent definitions into <target>/<agent dir>/agents/.
 
-        Mirrors remote dispatch behaviour (rsync .opencode/ or .claude/ to remote
-        work dir) for local execution, so subagent definitions are discoverable."""
-        src = self.script_dir / self.harness.agent_dir_name()
-        if not src.exists():
+        Only the agent files are written, with {{templates/...}} anchors resolved;
+        everything else in the target's .opencode/ or .claude/ (skills, config,
+        node_modules, the user's own agents) is left alone."""
+        from .scaffold import render_template_placeholders
+        src = self._agent_template_dir()
+        if not src.is_dir():
             return
-        dst = Path(target_cwd) / self.harness.agent_dir_name()
-        if src.resolve() == dst.resolve():
-            return
-
-        ignore_names = {"node_modules", ".DS_Store", "__pycache__", ".git"}
-        # Claude Code local state in the scripts repo's agent dir (worktree
-        # checkouts, per-user settings, session data) is not agent config.
-        top_level_ignore = ignore_names | {"worktrees", "settings.local.json", "projects"}
-
-        def _sync_tree(s: Path, d: Path, top: bool = False) -> None:
-            skip = top_level_ignore if top else ignore_names
-            d.mkdir(parents=True, exist_ok=True)
-            src_entries = {p.name: p for p in s.iterdir() if p.name not in skip}
-
-            if d.exists():
-                for p in d.iterdir():
-                    if p.name in skip:
-                        continue
-                    if p.name not in src_entries:
-                        try:
-                            if p.is_dir() and not p.is_symlink():
-                                shutil.rmtree(p, ignore_errors=True)
-                            else:
-                                p.unlink(missing_ok=True)
-                        except OSError:
-                            pass
-
-            for name, src_path in src_entries.items():
-                dst_path = d / name
-                if src_path.is_dir() and not src_path.is_symlink():
-                    _sync_tree(src_path, dst_path)
-                else:
-                    try:
-                        content = src_path.read_text(encoding='utf-8')
-                        if "{{" in content and "}}" in content:
-                            from .scaffold import render_template_placeholders
-                            content = render_template_placeholders(content, self.script_dir)
-                            dst_path.write_text(content, encoding='utf-8')
-                        else:
-                            shutil.copy2(src_path, dst_path)
-                    except (OSError, UnicodeDecodeError):
-                        shutil.copy2(src_path, dst_path)
-
-        _sync_tree(src, dst, top=True)
+        dst = Path(target_cwd) / self.harness.agent_dir_name() / "agents"
+        dst.mkdir(parents=True, exist_ok=True)
+        for src_path in sorted(src.glob("*.md")):
+            content = render_template_placeholders(src_path.read_text(encoding='utf-8'), self.script_dir)
+            (dst / src_path.name).write_text(content, encoding='utf-8')
 
     def _run_harness(self, prompt: str, log_file: Path, budget: float, cwd: str | None = None, item_id: str | None = None) -> int:
         """Delegate to the configured harness."""

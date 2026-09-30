@@ -42,8 +42,7 @@ class RemoteMixin:
                 if resolve_prompt_file.exists():
                     _run(["rsync", "-avz", str(resolve_prompt_file), f"{remote_host}:{rwd}/prompts/"])
 
-        agent_dir = self.script_dir / self.harness.agent_dir_name()
-        if agent_dir.exists():
+        if self._agent_template_dir().is_dir():
             with tempfile.TemporaryDirectory() as tmp_agent_dir:
                 self._sync_agent_dir(tmp_agent_dir)
                 staged_dir = Path(tmp_agent_dir) / self.harness.agent_dir_name()

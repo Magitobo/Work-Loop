@@ -43,9 +43,9 @@ MyNotebook/
 │   ├── templates/          ← master vault templates & single sources of truth
 │   │   ├── vault-AGENTS.md ← marker-fenced vault rules (Obsidian CLI & Verified Research)
 │   │   ├── VERIFIED-RESEARCH-README.md ← single source of truth for 03 Verified Research
-│   │   └── WORK.md         ← master dashboard outline template
-│   └── .claude/ or .opencode/  ← agent config (harness-dependent)
-│       └── agents/         ← subagent definitions (critic.md, code-reviewer.md, verified-research.md, research-worker.md)
+│   │   ├── WORK.md         ← master dashboard outline template
+│   │   └── agents/claude/ or agents/opencode/ ← subagent definitions (critic.md, code-reviewer.md, verified-research.md, research-worker.md)
+│   └── .claude/ or .opencode/  ← dev config for working on Work-Loop itself (never synced)
 └── Work-Loop-Items/        ← work items (part of the vault, not the scripts repo)
     ├── WORK.md             ← main work item table / dashboard
     └── <item-id>/          ← one folder per work item
@@ -220,7 +220,7 @@ Work-Loop equips the LLM harness with specialized subagents to keep the primary 
 
 ### Dynamic Subagent Templating
 
-To maintain a strict **Single Source of Truth**, the `verified-research` and `research-worker` definitions in `.opencode/agents/` and `.claude/agents/` use dynamic anchor tags referencing master templates in `templates/`:
+To maintain a strict **Single Source of Truth**, the `verified-research` and `research-worker` definitions in `templates/agents/opencode/` and `templates/agents/claude/` use dynamic anchor tags referencing master templates in `templates/`:
 
 * **`{{templates/VERIFIED-RESEARCH-README.md#1}}`** → Section 1: Core Architecture & Philosophy (Layered single-note model).
 * **`{{templates/VERIFIED-RESEARCH-README.md#2}}`** → Section 2: Standard Note Template (YAML frontmatter, claims, tables).
@@ -272,7 +272,7 @@ For **conversation items** (local):
 
 For **conversation items** (remote):
 1. Wipes `~/Work-Loop` on the remote
-2. Rsyncs item folder + prompt files + rendered harness agent config (`.claude/` or `.opencode/`)
+2. Rsyncs item folder + prompt files + rendered subagent definitions (into `.claude/agents/` or `.opencode/agents/`)
 3. Uploads and launches a bash script via `nohup` (harness runs detached)
 4. Polls `{ITEM_ID}/.done` every 5 seconds for the exit code
 5. Rsyncs results back, reads concise title from remote `WORK.md`, wipes remote
@@ -297,7 +297,7 @@ For **conversation items** (remote):
 
 - **Claude harness**: uses `claude --print --permission-mode auto --max-budget-usd <budget>`
 - **OpenCode harness**: uses `opencode run --auto --format json --title <item_id> --dir <path>`
-- Agent config directory: `.claude/` for Claude, `.opencode/` for OpenCode
+- Subagent definitions: `templates/agents/claude/` for Claude, `templates/agents/opencode/` for OpenCode, synced into the workspace's `.claude/agents/` or `.opencode/agents/`
 
 ### Harness-Specific Features
 

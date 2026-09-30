@@ -3,7 +3,7 @@
 
 These tests catch the class of bug where a prompt instructs the LLM to spawn a
 subagent (e.g. subagent_type="critic") but no matching agent definition file
-exists in .opencode/agents/ or .claude/agents/ — causing the LLM to silently
+exists in templates/agents/opencode/ or templates/agents/claude/ — causing the LLM to silently
 fail to spawn the subagent at runtime.
 """
 
@@ -12,6 +12,8 @@ import unittest
 from pathlib import Path
 
 _HERE = Path(__file__).parent.parent
+_OPENCODE_AGENTS = _HERE / "templates" / "agents" / "opencode"
+_CLAUDE_AGENTS = _HERE / "templates" / "agents" / "claude"
 
 # ---------------------------------------------------------------------------
 # Simple YAML frontmatter parser (no PyYAML dependency)
@@ -69,11 +71,11 @@ def _find_subagent_refs(text: str) -> list[str]:
 
 
 def _load_opencode_agents() -> dict[str, Path]:
-    """Return {agent_name: path} for agents in .opencode/agents/.
+    """Return {agent_name: path} for agents in templates/agents/opencode/.
 
     Agent name is derived from the filename (without .md extension).
     """
-    agents_dir = _HERE / ".opencode" / "agents"
+    agents_dir = _OPENCODE_AGENTS
     result: dict[str, Path] = {}
     if not agents_dir.is_dir():
         return result
@@ -84,11 +86,11 @@ def _load_opencode_agents() -> dict[str, Path]:
 
 
 def _load_claude_agents() -> dict[str, Path]:
-    """Return {agent_name: path} for agents in .claude/agents/.
+    """Return {agent_name: path} for agents in templates/agents/claude/.
 
     Agent name is read from the YAML frontmatter 'name' field.
     """
-    agents_dir = _HERE / ".claude" / "agents"
+    agents_dir = _CLAUDE_AGENTS
     result: dict[str, Path] = {}
     if not agents_dir.is_dir():
         return result
@@ -122,7 +124,7 @@ _PROMPT_FILES = [
 
 class TestSubagentReferences(unittest.TestCase):
     """Every subagent_type referenced in a prompt must have a matching agent
-    definition in at least one of .opencode/agents/ or .claude/agents/."""
+    definition in at least one of templates/agents/opencode/ or templates/agents/claude/."""
 
     @classmethod
     def setUpClass(cls):
@@ -152,7 +154,7 @@ class TestSubagentReferences(unittest.TestCase):
                     ref,
                     all_agents,
                     (f"{prompt_name} references subagent_type=\"{ref}\" but no "
-                     f"agent definition found in .opencode/agents/ or .claude/agents/"),
+                     f"agent definition found in templates/agents/opencode/ or templates/agents/claude/"),
                 )
 
         for agent_name, agent_path in all_agents.items():
@@ -182,7 +184,7 @@ class TestSubagentReferences(unittest.TestCase):
             self.assertIn(
                 agent_name,
                 all_refs,
-                (f"OpenCode agent '{agent_name}' exists in .opencode/agents/ but "
+                (f"OpenCode agent '{agent_name}' exists in templates/agents/opencode/ but "
                  f"is not referenced by any prompt file"),
             )
 
@@ -191,35 +193,35 @@ class TestCriticAgentDefinition(unittest.TestCase):
     """Validate the critic agent definition file structure and content."""
 
     def test_critic_opencode_file_exists(self):
-        p = _HERE / ".opencode" / "agents" / "critic.md"
+        p = _OPENCODE_AGENTS / "critic.md"
         self.assertTrue(p.is_file(), "OpenCode critic agent file missing")
 
     def test_critic_claude_file_exists(self):
-        p = _HERE / ".claude" / "agents" / "critic.md"
+        p = _CLAUDE_AGENTS / "critic.md"
         self.assertTrue(p.is_file(), "Claude critic agent file missing")
 
     def test_critic_opencode_is_subagent(self):
         """OpenCode critic agent must have mode: subagent."""
-        p = _HERE / ".opencode" / "agents" / "critic.md"
+        p = _OPENCODE_AGENTS / "critic.md"
         fm = _parse_frontmatter(p.read_text())
         self.assertIsNotNone(fm, "No YAML frontmatter in critic.md")
         self.assertEqual(fm.get("mode"), "subagent")
 
     def test_critic_opencode_no_edit(self):
         """OpenCode critic agent must deny edit permission."""
-        p = _HERE / ".opencode" / "agents" / "critic.md"
+        p = _OPENCODE_AGENTS / "critic.md"
         fm = _parse_frontmatter(p.read_text())
         self.assertEqual(fm.get("permission.edit"), "deny")
 
     def test_critic_opencode_no_bash(self):
         """OpenCode critic agent must deny bash permission."""
-        p = _HERE / ".opencode" / "agents" / "critic.md"
+        p = _OPENCODE_AGENTS / "critic.md"
         fm = _parse_frontmatter(p.read_text())
         self.assertEqual(fm.get("permission.bash"), "deny")
 
     def test_critic_has_four_checks(self):
         """Critic agent body must define all four checks."""
-        p = _HERE / ".opencode" / "agents" / "critic.md"
+        p = _OPENCODE_AGENTS / "critic.md"
         body = _extract_body(p.read_text())
         for check in ("WARNING", "ASSUMPTION", "ANSWERED", "GAP"):
             self.assertIn(check, body,
@@ -227,7 +229,7 @@ class TestCriticAgentDefinition(unittest.TestCase):
 
     def test_critic_description_in_frontmatter(self):
         """Critic agent must have a description in YAML frontmatter."""
-        p = _HERE / ".opencode" / "agents" / "critic.md"
+        p = _OPENCODE_AGENTS / "critic.md"
         fm = _parse_frontmatter(p.read_text())
         self.assertIn("description", fm)
         self.assertTrue(len(fm["description"]) > 10,
@@ -235,7 +237,7 @@ class TestCriticAgentDefinition(unittest.TestCase):
 
     def test_critic_no_file_writes_instruction(self):
         """Critic agent must instruct NOT to write files."""
-        p = _HERE / ".opencode" / "agents" / "critic.md"
+        p = _OPENCODE_AGENTS / "critic.md"
         text = p.read_text()
         self.assertRegex(text, r"(?i)do\s+not\s+.*write.*file",
                          "Critic should explicitly forbid file writes")
@@ -279,21 +281,21 @@ class TestCodeReviewerAgentDefinition(unittest.TestCase):
     """Validate the code-reviewer agent definition."""
 
     def test_code_reviewer_opencode_exists(self):
-        p = _HERE / ".opencode" / "agents" / "code-reviewer.md"
+        p = _OPENCODE_AGENTS / "code-reviewer.md"
         self.assertTrue(p.is_file(), "OpenCode code-reviewer agent file missing")
 
     def test_code_reviewer_claude_exists(self):
-        p = _HERE / ".claude" / "agents" / "code-reviewer.md"
+        p = _CLAUDE_AGENTS / "code-reviewer.md"
         self.assertTrue(p.is_file(), "Claude code-reviewer agent file missing")
 
     def test_code_reviewer_opencode_is_subagent(self):
-        p = _HERE / ".opencode" / "agents" / "code-reviewer.md"
+        p = _OPENCODE_AGENTS / "code-reviewer.md"
         fm = _parse_frontmatter(p.read_text())
         self.assertEqual(fm.get("mode"), "subagent")
 
     def test_code_reviewer_opencode_has_bash(self):
         """Code-reviewer needs bash to run tests."""
-        p = _HERE / ".opencode" / "agents" / "code-reviewer.md"
+        p = _OPENCODE_AGENTS / "code-reviewer.md"
         fm = _parse_frontmatter(p.read_text())
         self.assertEqual(fm.get("permission.bash"), "allow")
 
@@ -307,21 +309,21 @@ class TestResearchWorkerAgentDefinition(unittest.TestCase):
     """Validate the research-worker leaf agent definition."""
 
     def test_research_worker_opencode_exists(self):
-        p = _HERE / ".opencode" / "agents" / "research-worker.md"
+        p = _OPENCODE_AGENTS / "research-worker.md"
         self.assertTrue(p.is_file(), "OpenCode research-worker agent file missing")
 
     def test_research_worker_claude_exists(self):
-        p = _HERE / ".claude" / "agents" / "research-worker.md"
+        p = _CLAUDE_AGENTS / "research-worker.md"
         self.assertTrue(p.is_file(), "Claude research-worker agent file missing")
 
     def test_research_worker_opencode_is_subagent(self):
-        p = _HERE / ".opencode" / "agents" / "research-worker.md"
+        p = _OPENCODE_AGENTS / "research-worker.md"
         fm = _parse_frontmatter(p.read_text())
         self.assertIsNotNone(fm, "No YAML frontmatter in research-worker.md")
         self.assertEqual(fm.get("mode"), "subagent")
 
     def test_research_worker_opencode_permissions(self):
-        p = _HERE / ".opencode" / "agents" / "research-worker.md"
+        p = _OPENCODE_AGENTS / "research-worker.md"
         fm = _parse_frontmatter(p.read_text())
         self.assertEqual(fm.get("permission.edit"), "deny")
         self.assertEqual(fm.get("permission.bash"), "deny")
@@ -329,7 +331,7 @@ class TestResearchWorkerAgentDefinition(unittest.TestCase):
         self.assertEqual(fm.get("permission.read"), "allow")
 
     def test_research_worker_claude_permissions(self):
-        p = _HERE / ".claude" / "agents" / "research-worker.md"
+        p = _CLAUDE_AGENTS / "research-worker.md"
         fm = _parse_frontmatter(p.read_text())
         self.assertEqual(fm.get("permission.edit"), "deny")
         self.assertEqual(fm.get("permission.bash"), "deny")
@@ -337,31 +339,31 @@ class TestResearchWorkerAgentDefinition(unittest.TestCase):
         self.assertEqual(fm.get("permission.read"), "allow")
 
     def test_research_worker_description_in_frontmatter(self):
-        p = _HERE / ".opencode" / "agents" / "research-worker.md"
+        p = _OPENCODE_AGENTS / "research-worker.md"
         fm = _parse_frontmatter(p.read_text())
         self.assertIn("description", fm)
         self.assertTrue(len(fm["description"]) > 15, "Description too short")
 
     def test_research_worker_one_line_return_instruction(self):
-        p = _HERE / ".opencode" / "agents" / "research-worker.md"
+        p = _OPENCODE_AGENTS / "research-worker.md"
         text = p.read_text()
         self.assertIn("Done: Raw research written to", text)
         self.assertRegex(text, r"(?i)return\s+.*only", "Worker must instruct minimal return")
 
     def test_research_worker_context_protection(self):
-        p = _HERE / ".opencode" / "agents" / "research-worker.md"
+        p = _OPENCODE_AGENTS / "research-worker.md"
         text = p.read_text()
         self.assertIn("Context Window Protection", text)
 
     def test_research_worker_has_vault_and_web_scopes(self):
-        text = (_HERE / ".opencode" / "agents" / "research-worker.md").read_text()
+        text = (_OPENCODE_AGENTS / "research-worker.md").read_text()
         self.assertIn("## Scope: vault", text)
         self.assertIn("## Scope: web", text)
         self.assertIn("03 Verified Research/", text)
         self.assertIn("50 Raw/", text)
 
     def test_research_worker_includes_verification_rules(self):
-        text = (_HERE / ".opencode" / "agents" / "research-worker.md").read_text()
+        text = (_OPENCODE_AGENTS / "research-worker.md").read_text()
         self.assertIn("{{templates/VERIFIED-RESEARCH-README.md#3}}", text)
 
 
@@ -369,21 +371,21 @@ class TestVerifiedResearchAgentDefinition(unittest.TestCase):
     """Validate the verified-research orchestrator agent definition."""
 
     def test_verified_research_opencode_exists(self):
-        p = _HERE / ".opencode" / "agents" / "verified-research.md"
+        p = _OPENCODE_AGENTS / "verified-research.md"
         self.assertTrue(p.is_file(), "OpenCode verified-research agent file missing")
 
     def test_verified_research_claude_exists(self):
-        p = _HERE / ".claude" / "agents" / "verified-research.md"
+        p = _CLAUDE_AGENTS / "verified-research.md"
         self.assertTrue(p.is_file(), "Claude verified-research agent file missing")
 
     def test_verified_research_opencode_is_subagent(self):
-        p = _HERE / ".opencode" / "agents" / "verified-research.md"
+        p = _OPENCODE_AGENTS / "verified-research.md"
         fm = _parse_frontmatter(p.read_text())
         self.assertEqual(fm.get("mode"), "subagent")
 
     def test_verified_research_permissions(self):
-        for agent_dir in [".opencode", ".claude"]:
-            p = _HERE / agent_dir / "agents" / "verified-research.md"
+        for agents_dir in (_OPENCODE_AGENTS, _CLAUDE_AGENTS):
+            p = agents_dir / "verified-research.md"
             fm = _parse_frontmatter(p.read_text())
             self.assertEqual(fm.get("permission.edit"), "deny")
             self.assertEqual(fm.get("permission.bash"), "deny")
@@ -391,19 +393,19 @@ class TestVerifiedResearchAgentDefinition(unittest.TestCase):
             self.assertEqual(fm.get("permission.read"), "allow")
 
     def test_verified_research_has_dynamic_anchors(self):
-        p = _HERE / ".opencode" / "agents" / "verified-research.md"
+        p = _OPENCODE_AGENTS / "verified-research.md"
         text = p.read_text()
         self.assertIn("{{templates/VERIFIED-RESEARCH-README.md#1}}", text)
         self.assertIn("{{templates/VERIFIED-RESEARCH-README.md#2}}", text)
         self.assertIn("{{templates/VERIFIED-RESEARCH-README.md#3}}", text)
 
     def test_verified_research_spawns_research_worker(self):
-        p = _HERE / ".opencode" / "agents" / "verified-research.md"
+        p = _OPENCODE_AGENTS / "verified-research.md"
         text = p.read_text()
         self.assertIn('subagent_type="research-worker"', text)
 
     def test_verified_research_supports_three_modes(self):
-        p = _HERE / ".opencode" / "agents" / "verified-research.md"
+        p = _OPENCODE_AGENTS / "verified-research.md"
         text = p.read_text()
         for mode in ("`research`", "`synthesize`", "`refresh`"):
             self.assertIn(mode, text)
@@ -412,24 +414,24 @@ class TestVerifiedResearchAgentDefinition(unittest.TestCase):
         self.assertIn("`discussion_synthesis`", text)
 
     def test_verified_research_scans_vault_before_web(self):
-        text = (_HERE / ".opencode" / "agents" / "verified-research.md").read_text()
+        text = (_OPENCODE_AGENTS / "verified-research.md").read_text()
         vault = text.index("scope: vault")
         web = text.index("scope: web")
         self.assertLess(vault, web, "Vault scan must be dispatched before web workers")
 
     def test_verified_research_never_writes_03_directly_in_work_loop(self):
-        text = (_HERE / ".opencode" / "agents" / "verified-research.md").read_text()
+        text = (_OPENCODE_AGENTS / "verified-research.md").read_text()
         self.assertIn("draft-{topic-slug}.md", text)
         self.assertIn("never write into `03 Verified Research/` yourself", text)
 
     def test_research_agents_claude_and_opencode_in_sync(self):
         """The .opencode copies equal the .claude ones minus the model line and the sync-path comment."""
         for name in ("verified-research", "research-worker"):
-            claude = (_HERE / ".claude" / "agents" / f"{name}.md").read_text()
+            claude = (_CLAUDE_AGENTS / f"{name}.md").read_text()
             expected = "".join(
                 line for line in claude.splitlines(keepends=True) if not line.startswith("model: ")
             ).replace("(.claude/agents/)", "(.opencode/agents/)")
-            actual = (_HERE / ".opencode" / "agents" / f"{name}.md").read_text()
+            actual = (_OPENCODE_AGENTS / f"{name}.md").read_text()
             self.assertEqual(actual, expected, f"{name}: .opencode copy drifted from .claude")
 
     def test_loop_prompt_spawns_verified_research(self):
@@ -463,12 +465,12 @@ class TestVerifiedResearchAgentDefinition(unittest.TestCase):
         self.assertIn('subagent_type="verified-research"', prompt)
 
     def test_verified_research_context_protection(self):
-        p = _HERE / ".opencode" / "agents" / "verified-research.md"
+        p = _OPENCODE_AGENTS / "verified-research.md"
         text = p.read_text()
         self.assertIn("Context Window Protection", text)
 
     def test_verified_research_one_line_return_instruction(self):
-        p = _HERE / ".opencode" / "agents" / "verified-research.md"
+        p = _OPENCODE_AGENTS / "verified-research.md"
         text = p.read_text()
         self.assertIn("Done: Verified research note written to", text)
 

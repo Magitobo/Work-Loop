@@ -574,7 +574,7 @@ class TestJsonLogParser(unittest.TestCase):
 
 
 class TestAgentSync(unittest.TestCase):
-    """Verify .opencode/agents/ or .claude/agents/ is synced to workspace before harness runs."""
+    """Verify templates/agents/<harness>/ is synced into the workspace's agents/ dir before harness runs."""
 
     def test_agent_dir_copied_to_workspace(self):
         with tempfile.TemporaryDirectory() as tmp_str:
@@ -595,70 +595,53 @@ class TestAgentSync(unittest.TestCase):
             # Should not raise
             wl._sync_agent_dir(str(tmp))
 
-    def test_sync_overwrites_stale_agents(self):
+    def test_sync_overwrites_agents_and_keeps_others(self):
         with tempfile.TemporaryDirectory() as tmp_str:
             tmp = Path(tmp_str)
-            # Pre-seed a stale agent BEFORE construction so the startup sync cleans it up
-            stale_dir = tmp / ".opencode" / "agents"
-            stale_dir.mkdir(parents=True)
-            (stale_dir / "old-agent.md").write_text("stale")
+            # Pre-seed agents BEFORE construction so the startup sync runs over them
+            agents_dir = tmp / ".opencode" / "agents"
+            agents_dir.mkdir(parents=True)
+            (agents_dir / "critic.md").write_text("stale")
+            (agents_dir / "my-own-agent.md").write_text("user's")
 
             WorkLoop({"work_dir": tmp, "harness": {"type": "opencode"}}, script_dir=_HERE)
 
-            self.assertTrue((tmp / ".opencode" / "agents" / "critic.md").exists())
-            self.assertFalse((tmp / ".opencode" / "agents" / "old-agent.md").exists())
+            self.assertNotEqual((agents_dir / "critic.md").read_text(), "stale")
+            self.assertEqual((agents_dir / "my-own-agent.md").read_text(), "user's")
 
-    def test_sync_ignores_node_modules_and_transient_files(self):
-        with tempfile.TemporaryDirectory() as tmp_str:
-            tmp = Path(tmp_str)
-            fake_script_dir = tmp / "repo"
-            fake_agent_dir = fake_script_dir / ".opencode"
-            (fake_agent_dir / "agents").mkdir(parents=True)
-            (fake_agent_dir / "agents" / "critic.md").write_text("prompt")
-            (fake_agent_dir / "node_modules" / "some-pkg").mkdir(parents=True)
-            (fake_agent_dir / "node_modules" / "some-pkg" / "index.js").write_text("console.log(1)")
-            (fake_agent_dir / ".DS_Store").write_bytes(b"\x00\x00")
+    def _fake_repo(self, tmp: Path, harness: str) -> Path:
+        """Repo with one agent template and dev-only config in its own .<harness>/ dir."""
+        repo = tmp / "repo"
+        (repo / "templates" / "agents" / harness).mkdir(parents=True)
+        (repo / "templates" / "agents" / harness / "critic.md").write_text("prompt")
+        (repo / f".{harness}").mkdir()
+        (repo / f".{harness}" / "settings.json").write_text('{"dev": true}')
+        (repo / f".{harness}" / "opencode.json").write_text('{"dev": true}')
+        return repo
 
-            target_ws = tmp / "workspace"
-            target_ws.mkdir()
-            # Simulate pre-existing node_modules in destination workspace
-            (target_ws / ".opencode" / "node_modules" / "existing-pkg").mkdir(parents=True)
-            (target_ws / ".opencode" / "node_modules" / "existing-pkg" / "lib.js").write_text("existing")
+    def test_sync_copies_only_agents(self):
+        for harness in ("opencode", "claude"):
+            with self.subTest(harness=harness), tempfile.TemporaryDirectory() as tmp_str:
+                tmp = Path(tmp_str)
+                target_ws = tmp / "workspace"
+                dst = target_ws / f".{harness}"
+                # The target's own skills, config and node_modules
+                (dst / "skills" / "s").mkdir(parents=True)
+                (dst / "skills" / "s" / "SKILL.md").write_text("skill")
+                (dst / "node_modules" / "pkg").mkdir(parents=True)
+                (dst / "opencode.json").write_text('{"vault": true}')
 
-            wl = WorkLoop({"work_dir": target_ws, "harness": {"type": "opencode"}}, script_dir=fake_script_dir)
-            wl._sync_agent_dir(str(target_ws))
+                wl = WorkLoop({"work_dir": target_ws, "harness": {"type": harness}},
+                              script_dir=self._fake_repo(tmp, harness))
+                wl._sync_agent_dir(str(target_ws))
 
-            # Agents should be synced
-            self.assertTrue((target_ws / ".opencode" / "agents" / "critic.md").exists())
-            # Transient files should not be copied from source
-            self.assertFalse((target_ws / ".opencode" / ".DS_Store").exists())
-            self.assertFalse((target_ws / ".opencode" / "node_modules" / "some-pkg").exists())
-            # Existing node_modules in workspace should not be destroyed or crash
-            self.assertTrue((target_ws / ".opencode" / "node_modules" / "existing-pkg" / "lib.js").exists())
-
-    def test_sync_skips_claude_code_local_state(self):
-        with tempfile.TemporaryDirectory() as tmp_str:
-            tmp = Path(tmp_str)
-            fake_script_dir = tmp / "repo"
-            fake_agent_dir = fake_script_dir / ".claude"
-            (fake_agent_dir / "agents").mkdir(parents=True)
-            (fake_agent_dir / "agents" / "critic.md").write_text("prompt")
-            (fake_agent_dir / "settings.json").write_text("{}")
-            (fake_agent_dir / "settings.local.json").write_text("{}")
-            (fake_agent_dir / "worktrees" / "x").mkdir(parents=True)
-            # Unresolvable placeholder: rendering it would raise ValueError
-            (fake_agent_dir / "worktrees" / "x" / "file.py").write_text("s = '{{bogus}}'")
-
-            target_ws = tmp / "workspace"
-            target_ws.mkdir()
-            wl = WorkLoop({"work_dir": target_ws, "harness": {"type": "claude"}}, script_dir=fake_script_dir)
-            wl._sync_agent_dir(str(target_ws))
-
-            dst = target_ws / ".claude"
-            self.assertTrue((dst / "agents" / "critic.md").exists())
-            self.assertTrue((dst / "settings.json").exists())
-            self.assertFalse((dst / "worktrees").exists())
-            self.assertFalse((dst / "settings.local.json").exists())
+                self.assertEqual((dst / "agents" / "critic.md").read_text(), "prompt")
+                # The repo's dev config is not copied
+                self.assertFalse((dst / "settings.json").exists())
+                self.assertEqual((dst / "opencode.json").read_text(), '{"vault": true}')
+                # Nothing else in the target is removed
+                self.assertTrue((dst / "skills" / "s" / "SKILL.md").exists())
+                self.assertTrue((dst / "node_modules" / "pkg").is_dir())
 
 
 class TestPromptLoading(unittest.TestCase):
