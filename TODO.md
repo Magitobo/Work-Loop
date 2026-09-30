@@ -15,3 +15,9 @@
   - Let scan-files routines run standalone as well, not only attached.
   - Merge the `ready` / `analyze` synonyms into one status. Also use one word each for "running" (`in-progress` vs `running`) and "finished" (`success` vs `done`) across threads and routines.
   - Add a **Verified Research** checkbox to the thread Action Center, so it doesn't depend on phrasing the request in the reply.
+
+- [ ] **Consider replacing `work_dir:` with an `add_dir:` concept (noted 2026-09-30).**
+  Today `work_dir:` in an item's `CONVERSATION.md` moves the harness start directory to another repo, and only in implement mode. The run then treats that repo as the project and the vault as an external directory, so it can't reach its own `CONVERSATION.md` and context files without a permission. `external_directory: allow` was removed from all OpenCode configs on 2026-09-30, and Work-Loop development is now interactive-only. So `work_dir:` items would currently prompt or fail.
+  - Keep every run starting in the vault, and let an item list extra directories it may use (`add_dir: <path>`, like Claude Code's `--add-dir`). Apply it in every mode, not only implement.
+  - OpenCode: grant each listed path per run, e.g. an `external_directory` allow rule injected via `OPENCODE_CONFIG_CONTENT`; check that this is supported. Claude: pass `--add-dir`.
+  - Side benefit: the agent sync would no longer write the loop's agents into the target repo's `.opencode/agents/`.
