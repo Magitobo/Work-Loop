@@ -46,6 +46,22 @@ class TestParseResponse(unittest.TestCase):
         self.assertEqual(r["tool_calls"], [{"name": "bash", "arguments": '{"cmd":"ls"}'}])
         self.assertEqual(r["finish_reason"], "tool_calls")
 
+    def test_long_tool_arguments_stay_valid_json(self):
+        n = llmcapture.MAX_TOOL_ARG_VALUE_CHARS
+        args = json.dumps({"filePath": "a.md", "content": "x" * (n + 500)})
+        body = json.dumps({"choices": [{"message": {"tool_calls": [
+            {"index": 0, "function": {"name": "write", "arguments": args}}]}}]})
+        parsed = json.loads(llmcapture._parse_response(body)["tool_calls"][0]["arguments"])
+        self.assertEqual(parsed["filePath"], "a.md")
+        self.assertEqual(parsed["content"], "x" * n + "…[+500 chars]")
+
+    def test_long_unparseable_arguments_are_cut(self):
+        n = llmcapture.MAX_TOOL_ARG_VALUE_CHARS
+        body = json.dumps({"choices": [{"message": {"tool_calls": [
+            {"index": 0, "function": {"name": "bash", "arguments": "{" + "y" * (n + 10)}}]}}]})
+        args = llmcapture._parse_response(body)["tool_calls"][0]["arguments"]
+        self.assertTrue(args.endswith("…[+11 chars]"))
+
     def test_plain_json_response(self):
         body = json.dumps({"choices": [{"finish_reason": "stop",
                                         "message": {"content": "Hi", "reasoning": "greet"}}]})

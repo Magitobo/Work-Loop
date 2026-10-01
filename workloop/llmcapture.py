@@ -19,7 +19,7 @@ from .utils import _ts
 
 HTTP_TIMEOUT_S = 10
 WINDOW_SLACK_S = 5
-MAX_TOOL_ARGS_CHARS = 2000
+MAX_TOOL_ARG_VALUE_CHARS = 2000
 PARAM_KEYS = (
     "temperature", "top_p", "top_k", "min_p", "presence_penalty", "presence_context_size",
     "frequency_penalty", "repetition_penalty", "max_tokens", "chat_template_kwargs", "stream",
@@ -84,6 +84,27 @@ def _decode(b64: str | None) -> str:
         return ""
 
 
+def _shorten(value):
+    """Cut long strings anywhere inside a decoded JSON value, noting how much was dropped."""
+    if isinstance(value, str) and len(value) > MAX_TOOL_ARG_VALUE_CHARS:
+        return f"{value[:MAX_TOOL_ARG_VALUE_CHARS]}…[+{len(value) - MAX_TOOL_ARG_VALUE_CHARS} chars]"
+    if isinstance(value, dict):
+        return {k: _shorten(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_shorten(v) for v in value]
+    return value
+
+
+def _shorten_args(arguments: str) -> str:
+    """Keep tool-call arguments valid JSON while capping long values (e.g. file contents)."""
+    if len(arguments) <= MAX_TOOL_ARG_VALUE_CHARS:
+        return arguments
+    try:
+        return json.dumps(_shorten(json.loads(arguments)), ensure_ascii=False, separators=(",", ":"))
+    except ValueError:
+        return _shorten(arguments)
+
+
 def _parse_response(body: str) -> dict:
     """Return content, reasoning, tool calls and finish reason from a JSON or SSE response."""
     content, reasoning, finish, calls = [], [], None, {}
@@ -112,7 +133,7 @@ def _parse_response(body: str) -> dict:
                 c["arguments"] += fn.get("arguments") or ""
             finish = choice.get("finish_reason") or finish
     for c in calls.values():
-        c["arguments"] = c["arguments"][:MAX_TOOL_ARGS_CHARS]
+        c["arguments"] = _shorten_args(c["arguments"])
     return {"content": "".join(content), "reasoning": "".join(reasoning),
             "tool_calls": list(calls.values()), "finish_reason": finish}
 
