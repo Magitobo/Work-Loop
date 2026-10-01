@@ -14,6 +14,9 @@ Evidence from the VR-REFRESH-TEST runs on 2026-09-30 (OpenCode, llama.cpp Qwen 3
   - Triage reads used `limit: 45` lines, but AI-export notes have very long lines, so a "short" read was up to 11k characters (TurboQuant, tax, Docling notes).
   - The context reached 106k tokens, compaction ran (#140), and the worker re-read the note to recover the verbatim details the summary dropped.
   - It then wrote `raw-vault.md` (28 KB) in one 15.7k-token response that took 13 minutes.
+- **The web phase was heading the same way.** The orchestrator planned 4 serial web workers.
+  - The first worker fetched raw GitHub releases API and PyPI JSON. Its context reached 60k tokens after one batch of fetches (#147–#148), and one step took almost 10 minutes.
+  - The run was aborted at 21:02, 1h29m in, partway through the first web worker, with only `raw-vault.md` written.
 - **Refresh and research share one mode switch.** `refresh` is a flag passed through skill → orchestrator → worker, and each layer has to apply it correctly. The brief above mixed refresh work (a claim inventory) with research behaviour (a scan of everything), and the worker did the expensive part.
 - **Cold starts add up:** each new subagent costs a 10–12k-token prefill, about a minute on the Mac Studio. With `-np 2` and `--cache-ram 0`, the layers also evict each other's KV cache.
 
@@ -65,6 +68,7 @@ There is one `research-worker` definition with explicit task types. Each has its
 - **Narrow before reading.** Search filenames and frontmatter first, and grep only for specific phrases. If a grep returns more than about 30 matches, refine the pattern instead of reading the results.
 - **Triage by frontmatter.** Read about the first 15 lines (frontmatter and description) to judge relevance. Read at most 10 notes in full.
 - **Write incrementally.** Append to the output file after each batch of notes or sources, so compaction or a crash does not lose results. The file is the worker's memory.
+- **Fetch narrowly.** Prefer a release page, a PR page or a single API object, like `.../releases/latest` or `.../pulls/1547`, over list endpoints and full JSON dumps (`?per_page=15`, the PyPI JSON). Extract the few fields needed and drop the rest.
 - **Return one line,** as today.
 
 ### 4. Single source for the rules
